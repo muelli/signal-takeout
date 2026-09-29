@@ -1,6 +1,6 @@
 # signal-takeout
 
-Exports a local Signal Desktop database to static HTML — one page per
+Exports a local Signal Desktop database to static HTML: one page per
 conversation plus an index, with attachments decrypted alongside.
 
 Reads only your own installation. Nothing leaves the machine.
@@ -61,16 +61,16 @@ the export folder together.
 Signal keeps the SQLCipher key in `config.json` next to the database, in one
 of two forms:
 
-- **`key`** — plaintext hex. This is what you get with
+- **`key`**: plaintext hex. This is what you get with
   `SIGNAL_PASSWORD_STORE=basic`, the default for the Flathub build. Nothing to
   decrypt.
-- **`encryptedKey`** — hex of a Chromium `os_crypt` blob sealed by
+- **`encryptedKey`**: hex of a Chromium `os_crypt` blob sealed by
   Electron's `safeStorage`. On Linux that's AES-128-CBC with a PBKDF2-SHA1
   key (salt `saltysalt`, 1 iteration, IV of 16 spaces). `v10` blobs use the
   hardcoded password `peanuts`; `v11` blobs use a secret from the desktop
   keyring, which the tool tries to read via `secret-tool`, or you pass with
   `--safe-storage-password`. macOS is read from the Keychain via `security`.
-  Windows DPAPI is not implemented — use `--key` there.
+  Windows DPAPI is not implemented; use `--key` there.
 
 The database itself is opened in SQLCipher **raw key mode**
 (`PRAGMA key = "x'<hex>'"`), no KDF, matching `keyDatabase()` in
@@ -78,15 +78,15 @@ The database itself is opened in SQLCipher **raw key mode**
 
 ## Where the data lives
 
-- `conversations.json` — contact and group metadata; titles come from
+- `conversations.json`: contact and group metadata; titles come from
   `systemGivenName`, else profile name, else phone number.
-- `messages` — `body` and `type` are columns; `reactions`, `quote`,
+- `messages`: `body` and `type` are columns; `reactions`, `quote`,
   `bodyRanges` and the rest live in the `json` blob.
 - `avatar` and `profileAvatar` in each conversation's JSON point at picture files
   in `attachments.noindex/`, encrypted like attachments (older data is plain).
   The contact or group avatar is preferred, as in Signal, then the profile
   picture.
-- `message_attachments` — attachments were moved out of the message JSON in
+- `message_attachments`: attachments were moved out of the message JSON in
   schema 1360, so they are read from this table.
 
 Local attachment files under `attachments.noindex/` are individually
