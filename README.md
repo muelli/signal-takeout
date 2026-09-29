@@ -35,6 +35,7 @@ Useful flags:
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
 | `--no-attachments` | Text only; much faster |
 | `--limit N` | First N messages per conversation, for a quick look |
+| `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |
 
 ## How it gets in
 
@@ -86,5 +87,5 @@ including a genuinely encrypted attachment:
 
 ```sh
 uv run make_fixture.py /tmp/fake-signal
-uv run signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export
+uv run signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export -v
 ```

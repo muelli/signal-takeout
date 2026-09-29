@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import os
 import re
 import shutil
@@ -29,6 +30,8 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger("signal_takeout")
 
 try:
     from sqlcipher3 import dbapi2 as sqlcipher
@@ -447,7 +450,9 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
     parts = []
     rendered = 0
     last_day = None
-    for row in rows:
+    for seen, row in enumerate(rows, 1):
+        if seen % 500 == 0:
+            log.info("    %d messages read, %d rendered", seen, rendered)
         try:
             data = json.loads(row["json"] or "{}")
         except json.JSONDecodeError:
@@ -473,6 +478,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
                     parts.append(f'<div class="day">{esc(last_day)}</div>')
                 parts.append(f'<div class="system">{esc(text)}</div>')
                 rendered += 1
+                log.debug("    #%d system: %s", rendered, text)
             continue
 
         day = fmt_day(row["sent_at"])
@@ -482,6 +488,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
 
         outgoing = msg_type == "outgoing"
         rendered += 1
+        log.debug("    #%d %s %s", rendered, msg_type, fmt_time(row["sent_at"]))
         inner = []
 
         if convo["type"] == "group" and not outgoing:
@@ -535,7 +542,13 @@ def main() -> int:
     ap.add_argument("--no-attachments", action="store_true",
                     help="skip decrypting and copying attachment files")
     ap.add_argument("--limit", type=int, help="max messages per conversation (for testing)")
+    ap.add_argument("-v", "--verbose", action="count", default=0,
+                    help="log progress per conversation; repeat (-vv) for every message")
     args = ap.parse_args()
+    logging.basicConfig(
+        level=(logging.WARNING, logging.INFO, logging.DEBUG)[min(args.verbose, 2)],
+        format="%(message)s", stream=sys.stderr,
+    )
 
     data_dir = find_data_dir(args.data_dir)
     db_path = data_dir / "sql" / "db.sqlite"
@@ -572,9 +585,11 @@ def main() -> int:
     exported, failed, skipped_empty = 0, 0, 0
     summaries = []
 
-    for convo in convos.values():
+    for pos, convo in enumerate(convos.values(), 1):
+        log.info("[%d/%d] %s", pos, len(convos), convo["title"])
         rows = load_messages(conn, convo["id"], args.limit)
         if not rows:
+            log.info("    nothing to render, skipped")
             skipped_empty += 1
             continue
 
@@ -614,8 +629,10 @@ def main() -> int:
         content, rendered = render_conversation(convo, rows, attachments,
                                                 name_for_aci, f"{slug}_files")
         if not rendered:
+            log.info("    nothing to render, skipped")
             skipped_empty += 1
             continue
+        log.info("    %d entries", rendered)
         (out_dir / "chats" / f"{slug}.html").write_text(
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
                         content=content)
