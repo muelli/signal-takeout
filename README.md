@@ -35,7 +35,7 @@ Useful flags:
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
 | `--no-attachments` | Text only; much faster (profile pictures are still exported, long messages stay cut off) |
 | `--export-only NAME` | Only conversations with NAME in a contact or group name, case insensitive (profile names count too) |
-| `--limit N` | Stop after N rendered messages across all conversations, for testing |
+| `--limit N` | Only the N newest messages across all conversations, for testing |
 | `--sort recent\|name` | Initial index order: last message (default) or name |
 | `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |
 
@@ -53,8 +53,16 @@ previous and next buttons (Enter and Shift+Enter work too). Matching ignores
 case and accents. While you scroll a conversation, the current date floats
 below its search box.
 
-The search data lives in `assets/search-index.js` next to the pages, so keep
-the export folder together.
+Long conversations are split into one file per month (or per 2000 entries in
+a busy month) under `chats/<name>_months/`. The page loads a month when you
+scroll near it and drops it again when you are far away, so the browser never
+holds the whole history. A month menu next to the search box jumps around, and
+in-page search covers every month. This works from `file://` because chunks
+are loaded as scripts, not with `fetch`.
+
+The search data lives in `assets/search-index.js` and the per-conversation
+`_months/` folders next to the pages, so keep the export folder together. The
+index search still loads all message text for every conversation at once.
 
 ## How it gets in
 
@@ -94,7 +102,8 @@ encrypted as `IV(16) || AES-256-CBC || HMAC-SHA256(32)`, keyed by the
 per-file base64 `localKey` (32 bytes AES + 32 bytes MAC). Files are decrypted
 in a stream, so large videos do not need to fit in memory. The output is
 written to a temporary file and only renamed into place once the MAC checks
-out; failures are reported inline in the HTML rather than aborting the export.
+out; failures are reported inline in the HTML and logged with their reason, and the
+end of the run summarizes them, rather than aborting the export.
 
 ## What it renders
 

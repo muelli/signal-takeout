@@ -12,6 +12,7 @@ Two files matter: `signal_takeout.py` (everything, including the CSS and the
 browser JS as string constants) and `make_fixture.py` (synthetic data dir).
 
 Output layout: `index.html`, `chats/<slug>.html`, `chats/<slug>_files/`,
+`chats/<slug>_months/{<month>.js,find.js}`,
 `assets/{style.css,takeout.js,search-index.js,avatars/}`.
 
 ## Working rules for this user
@@ -42,6 +43,7 @@ Exporter against the fixture:
 podman run --rm -v "$PWD":/work:ro -v /tmp/out:/out -w /tmp docker.io/library/python:3.12-slim sh -c 'pip install -q uv && uv run /work/make_fixture.py /out/fake && uv run /work/signal_takeout.py --data-dir /out/fake -o /out/export -vv'
 ```
 
+The fixture has Dave, a conversation over four months, for the chunk tests.
 The browser JS has no committed tests. To check it, install `jsdom` inside the
 node image, load `export/index.html` with `JSDOM.fromFile(..., { runScripts:
 "dangerously", resources: "usable" })`, wait for `load`, stub
@@ -52,9 +54,17 @@ insensitive matching, anchors like `chats/x.html#m2`, find count and next/prev,
 avatar `src` files exist. Remember the export dir must come from a run without
 `--limit`, or the pages will have too few conversations.
 
-The floating date has no layout in jsdom: stub `getBoundingClientRect` on
-`.stickybar` and on each `.day`, dispatch `scroll`, wait about 60 ms.
-No real browser has been used yet, so CSS and sticky positioning are unseen.
+jsdom has no layout, so chunk tests fake it: give `.stickybar`, `.chunk`,
+`.day` and `.msg` a `getBoundingClientRect` computed from a virtual scrollY
+(sections stacked, loaded ones taller than placeholders), stub `scrollIntoView`
+to set that scrollY, set `innerHeight`, and open pages with `#mN` in the `url`
+option to test goto. Assert which `.chunk` elements are loaded (`_loaded`)
+after scrolling, that `#mN` gets the `jump` class, and find counts
+("1 / 60", prev wraps to the newest). Wait about 300 to 450 ms after events
+(find is debounced and chunks load through script tags).
+`Chunker` can be unit tested by importing the module with a small `CHUNK_CAP`.
+No real browser has been used yet, so CSS, sticky positioning and scroll
+compensation are unseen.
 
 To see tqdm bars, stderr must be a real terminal. `podman run -t` plus
 `script` sets `COLUMNS=-1`, which makes tqdm print nothing. Drive the run
@@ -69,9 +79,11 @@ flipped byte, a truncated file and a tiny file, which must all raise
 
 ## Design decisions
 
-- `--limit N` is an overall budget of rendered entries across all conversations
-  (system entries count). Messages are read lazily from a cursor; attachments
-  are decrypted only for messages that are actually rendered.
+- `--limit N` exports the N newest database messages across the selected
+  conversations: `newest_cutoff` finds the `received_at` of the Nth newest and
+  each conversation loads rows at or after it. Rows with nothing to render
+  make the rendered count a little lower. Attachments are decrypted only for
+  messages that are rendered.
 - `--export-only NAME` filters before `--limit`. It matches casefolded
   substrings against every name field (`conversation_names`): group name,
   system given/family/full, profile given/family/full. `aci_to_name` is built
@@ -79,7 +91,20 @@ flipped byte, a truncated file and a tiny file, which must all raise
 - The index's "last message" is the last rendered entry, not the last db row.
 - Search data is a `<script>`-loadable `assets/search-index.js` assigning
   `window.SEARCH_INDEX`, because `fetch` of JSON is blocked on `file://`.
-  Conversation pages search their own DOM and need no index.
+- Conversation pages are chunked by month (`Chunker`): a chunk closes when the
+  month changes, or at a day change once it has `CHUNK_CAP` (2000) entries.
+  Each chunk is `<month>.js` calling `window.__chunk(id, html)`; the page holds
+  height-estimated `<section class="chunk">` placeholders. `initChat` loads
+  sections within about 1.5 screens and unloads beyond 3 (freezing the real
+  height), compensates `scrollBy` when a loaded section is above the viewport
+  (`overflow-anchor:none` on `#timeline`), and `reveal(n)` loads the chunk for
+  entry `n` from its `data-first`/`data-last`. `#mN` navigation, the month
+  select and find all go through `reveal`. Entry numbers are per conversation
+  and shared with the global search index anchors.
+- In-page find uses a lazily loaded `<month dir>/find.js` (`window.__find`,
+  `[[n, text]]`), so it sees all months; loaded chunks get marks through
+  `chat.onLoad`. The global index still keeps all text of all conversations in
+  memory.
 - All page text goes into the DOM via `textContent` or `esc()`; message bodies
   are untrusted, so never build result HTML with `innerHTML`.
 - Matching normalizes with NFD, strips combining marks and lowercases.
@@ -141,15 +166,11 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - `--no-attachments` still exports avatars (they are tiny).
 - The whole search index is held in memory and written in one file; a very
   large profile may want sharding.
-- Very long conversations become one huge HTML file. Options discussed but not
-  built: `content-visibility: auto` on messages (cheap, helps layout but not
-  DOM size); chunked `chunks/N.js` files injected with `<script>` (works on
-  file://, unlike fetch) and unloaded again when far from the viewport;
-  paging by month. The search index already carries anchors, so any of them
-  must keep `#mN` links working.
-- The in-conversation find only looks at `.body` text, not captions or link
-  preview titles (global search does include both).
+- Chunk height estimates (64 px per entry) are rough, so the scrollbar length
+  shifts as months load. An `<noscript>` note says JS is needed.
+- Attachment failures are logged as warnings with reason, file and message id,
+  and summarized at the end. `file missing on disk` (Signal purged the file) is
+  the likely common one; `MAC mismatch` means corrupt data or a wrong key.
 - Contact avatars on shared contact cards, edit history and story attachments
   are not rendered.
-- README.md still has several em-dashes from the initial commit.
 - There is no committed test suite; the fixture plus manual runs above are it.
