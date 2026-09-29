@@ -360,7 +360,8 @@ def load_attachments(conn) -> dict:
                screenshotPath, screenshotLocalKey, screenshotSize,
                screenshotContentType, wasTooBig, pending, error, isCorrupted
         FROM message_attachments
-        WHERE attachmentType = 'attachment' AND editHistoryIndex = -1
+        WHERE attachmentType IN ('attachment', 'long-message', 'quote', 'preview', 'sticker')
+          AND editHistoryIndex = -1
         ORDER BY messageId, orderInMessage
         """
     )
@@ -452,6 +453,16 @@ a { color:#2c6bed; }
 .att-file { display:inline-block; margin-top:.35rem; font-size:.85rem; }
 .att-size, .att-label { opacity:.7; font-size:.8rem; }
 .caption { margin-top:.35rem; }
+.att img.sticker { max-width:8rem; }
+.qthumb { float:right; width:2.5rem; height:2.5rem; object-fit:cover;
+  border-radius:4px; margin-left:.5rem; }
+.preview { display:block; margin-top:.35rem; padding:.5rem; border-radius:8px;
+  border:1px solid currentColor; color:inherit; text-decoration:none;
+  overflow-wrap:anywhere; }
+.preview img { max-width:100%; border-radius:6px; display:block; margin-bottom:.35rem; }
+.ptitle { font-weight:600; }
+.pdesc, .purl { font-size:.8rem; opacity:.75; }
+.contact { margin-top:.35rem; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
 [hidden] { display:none !important; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
@@ -759,6 +770,10 @@ def missing_reason(att: dict) -> str:
     return "not downloaded"
 
 
+def att_href(rel_dir: str, name: str) -> str:
+    return esc(f"{rel_dir}/{quote(name)}")
+
+
 def render_attachment(att: dict, rel_dir: str) -> str:
     name = att.get("fileName") or ""
     label = esc(name or att.get("contentType") or "attachment")
@@ -769,7 +784,7 @@ def render_attachment(att: dict, rel_dir: str) -> str:
         detail = f" ({size})" if size else ""
         return f'<div class="missing">[attachment {label}{detail}: {esc(reason)}]</div>' + caption
 
-    href = esc(f"{rel_dir}/{quote(att['_exported'])}")
+    href = att_href(rel_dir, att["_exported"])
     ctype = att.get("contentType") or ""
     flags = att.get("flags") or 0
     if ctype.startswith("image/"):
@@ -777,7 +792,7 @@ def render_attachment(att: dict, rel_dir: str) -> str:
     elif ctype.startswith("video/") and flags & GIF:
         media = f'<video src="{href}" autoplay loop muted playsinline></video>'
     elif ctype.startswith("video/"):
-        poster = f' poster="{esc(rel_dir)}/{esc(quote(att["_poster"]))}"' if att.get("_poster") else ""
+        poster = f' poster="{att_href(rel_dir, att["_poster"])}"' if att.get("_poster") else ""
         preload = "none" if poster else "metadata"
         media = f'<video controls preload="{preload}"{poster} src="{href}"></video>'
     elif ctype.startswith("audio/"):
@@ -789,6 +804,52 @@ def render_attachment(att: dict, rel_dir: str) -> str:
         return (f'<a class="att-file" href="{href}"{download}>\U0001F4CE {label}{detail}</a>'
                 + caption)
     return f'<div class="att">{media}</div>' + caption
+
+
+def quote_label(quote_atts) -> str:
+    first = quote_atts[0] if quote_atts else {}
+    kind = (first.get("contentType") or "").split("/")[0]
+    named = {"image": "Photo", "video": "Video", "audio": "Audio"}.get(kind)
+    return first.get("fileName") or named or "Attachment"
+
+
+def render_quote(quote_data: dict, thumbs: list, author: str, rel_dir: str) -> str:
+    text = quote_data.get("text") or quote_label(quote_data.get("attachments") or [])
+    thumb = next((t for t in thumbs if t.get("_exported")), None)
+    img = (f'<img class="qthumb" loading="lazy" alt="" '
+           f'src="{att_href(rel_dir, thumb["_exported"])}">' if thumb else "")
+    return f'<div class="quote">{img}<b>{esc(author)}</b><br>{esc(text)}</div>'
+
+
+def render_preview(preview: dict, image: dict | None, rel_dir: str) -> str:
+    url = preview.get("url") or ""
+    img = (f'<img loading="lazy" alt="" src="{att_href(rel_dir, image["_exported"])}">'
+           if image and image.get("_exported") else "")
+    title = esc(preview.get("title") or url)
+    desc = f'<div class="pdesc">{esc(preview["description"])}</div>' if preview.get("description") else ""
+    inner = f'{img}<div class="ptitle">{title}</div>{desc}<div class="purl">{esc(url)}</div>'
+    if url.startswith(("http://", "https://")):
+        return (f'<a class="preview" href="{esc(url)}" target="_blank" '
+                f'rel="noopener noreferrer">{inner}</a>')
+    return f'<div class="preview">{inner}</div>'
+
+
+def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
+    emoji = esc(sticker.get("emoji") or "")
+    if att and att.get("_exported"):
+        return (f'<div class="att"><img class="sticker" loading="lazy" alt="{emoji}" '
+                f'src="{att_href(rel_dir, att["_exported"])}"></div>')
+    return f'<div class="missing">[sticker {emoji}]</div>'
+
+
+def render_contact(contact: dict) -> str:
+    name = contact.get("name") or {}
+    label = (name.get("displayName")
+             or " ".join(p for p in (name.get("givenName"), name.get("familyName")) if p)
+             or name.get("organization") or "Contact")
+    numbers = [n.get("value") for n in contact.get("number") or [] if isinstance(n, dict)]
+    detail = ", ".join(n for n in numbers if n)
+    return f'<div class="contact">Contact: {esc(label)}{esc(" (" + detail + ")") if detail else ""}</div>'
 
 
 def describe_system(data: dict) -> str | None:
@@ -826,6 +887,12 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
         if not src.is_file():
             att["_error"] = "file missing on disk"
             stats["failed"] += 1
+            continue
+        if att["attachmentType"] == "long-message":
+            try:
+                att["_text"] = read_stored_file(src, att).decode("utf-8")
+            except (OSError, ValueError) as exc:
+                log.debug("    long message %s unusable: %s", att["path"], exc)
             continue
         att_dir.mkdir(parents=True, exist_ok=True)
         base = safe_name(att["fileName"], unicode=True) if att.get("fileName") else ""
@@ -889,9 +956,16 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             row["body"] or data.get("body") or "", data.get("bodyRanges"), name_for_aci
         )
         atts = attachments.get(row["id"], [])
+        by_type = defaultdict(list)
+        for att in atts:
+            by_type[att["attachmentType"]].append(att)
         quote = data.get("quote") if isinstance(data.get("quote"), dict) else None
+        sticker = data.get("sticker") if isinstance(data.get("sticker"), dict) else None
+        previews = [p for p in data.get("preview") or [] if isinstance(p, dict)]
+        contacts = [c for c in data.get("contact") or [] if isinstance(c, dict)]
         has_content = bool(
-            body or atts or quote or data.get("deletedForEveryone")
+            body or by_type["attachment"] or quote or sticker or contacts
+            or data.get("deletedForEveryone")
         )
 
         # Anything with no renderable content is either a system event (group
@@ -918,24 +992,35 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         last_ts = row["sent_at"]
         log.debug("    #%d %s %s", rendered, msg_type, fmt_time(row["sent_at"]))
         export_att(atts)
+        full_text = next((a["_text"] for a in by_type["long-message"] if a.get("_text")), None)
+        if full_text and not data.get("deletedForEveryone"):
+            body = apply_mentions(full_text, data.get("bodyRanges"), name_for_aci)
         inner = []
 
         if convo["type"] == "group" and not outgoing:
             inner.append(f'<div class="author">{esc(name_for_aci(row["sourceServiceId"]))}</div>')
 
         if quote:
-            qauthor = name_for_aci(quote.get("authorAci"))
-            qtext = quote.get("text") or "(attachment)"
-            inner.append(f'<div class="quote"><b>{esc(qauthor)}</b><br>{esc(qtext)}</div>')
+            inner.append(render_quote(quote, by_type["quote"],
+                                      name_for_aci(quote.get("authorAci")), att_rel_dir))
 
         if data.get("deletedForEveryone"):
             inner.append('<div class="body deleted">This message was deleted.</div>')
         else:
             if body:
                 inner.append(f'<div class="body">{esc(body)}</div>')
-            for att in atts:
+            for att in by_type["attachment"]:
                 inner.append(render_attachment(att, att_rel_dir))
-            searchable = " ".join(t for t in [body] + [a.get("caption") for a in atts] if t)
+            if sticker:
+                inner.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
+                                            att_rel_dir))
+            for idx, preview in enumerate(previews):
+                image = next((a for a in by_type["preview"] if a["orderInMessage"] == idx), None)
+                inner.append(render_preview(preview, image, att_rel_dir))
+            inner.extend(render_contact(c) for c in contacts)
+            searchable = " ".join(t for t in (
+                [body] + [a.get("caption") for a in by_type["attachment"]]
+                + [p.get("title") for p in previews]) if t)
             if searchable:
                 hits.append((rendered, row["sent_at"] or 0, searchable))
 
