@@ -34,7 +34,7 @@ Useful flags:
 | `--key HEX` | Supply the 64-char SQLCipher key directly |
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
 | `--no-attachments` | Text only; much faster |
-| `--limit N` | First N messages per conversation, for a quick look |
+| `--limit N` | Stop after N rendered messages across all conversations, for testing |
 | `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |
 
 ## How it gets in

@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -296,16 +297,16 @@ def load_our_aci(conn) -> str | None:
     return value.split(".")[0] if isinstance(value, str) else None
 
 
-def load_messages(conn, conversation_id: str, limit: int | None):
-    sql = """
+def load_messages(conn, conversation_id: str):
+    return conn.execute(
+        """
         SELECT id, json, body, type, sent_at, received_at, sourceServiceId, isErased
         FROM messages
         WHERE conversationId = ?
         ORDER BY received_at ASC, sent_at ASC
-    """
-    if limit:
-        sql += f" LIMIT {int(limit)}"
-    return conn.execute(sql, (conversation_id,)).fetchall()
+        """,
+        (conversation_id,),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -446,11 +447,53 @@ def describe_system(data: dict) -> str | None:
     return None
 
 
-def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
+def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None:
+    for att in atts:
+        src = att_root / att["path"]
+        if not src.is_file():
+            att["_error"] = "file missing on disk"
+            stats["failed"] += 1
+            continue
+        try:
+            raw = src.read_bytes()
+            blob = (decrypt_attachment(raw, att["localKey"], att["size"])
+                    if att.get("localKey") else raw)
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            att["_error"] = str(exc)
+            stats["failed"] += 1
+            continue
+        att_dir.mkdir(parents=True, exist_ok=True)
+        base = safe_name(att.get("fileName") or "")
+        if not base or "." not in base:
+            ext = (att.get("contentType") or "").split("/")[-1][:8] or "bin"
+            base = f"{att['path'].replace('/', '_')}.{ext}"
+        dest = att_dir / base
+        n = 1
+        while dest.exists():
+            dest = att_dir / f"{dest.stem}_{n}{dest.suffix}"
+            n += 1
+        dest.write_bytes(blob)
+        att["_exported"] = dest.name
+        stats["exported"] += 1
+        log.debug("    attachment %s -> %s", att["path"], dest.name)
+
+
+@dataclass
+class Rendered:
+    html: str
+    count: int
+    last_ts: int | None
+
+
+def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
+                        export_att, budget=None) -> Rendered:
     parts = []
     rendered = 0
+    last_ts = None
     last_day = None
     for seen, row in enumerate(rows, 1):
+        if budget is not None and rendered >= budget:
+            break
         if seen % 500 == 0:
             log.info("    %d messages read, %d rendered", seen, rendered)
         try:
@@ -478,6 +521,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
                     parts.append(f'<div class="day">{esc(last_day)}</div>')
                 parts.append(f'<div class="system">{esc(text)}</div>')
                 rendered += 1
+                last_ts = row["sent_at"]
                 log.debug("    #%d system: %s", rendered, text)
             continue
 
@@ -488,7 +532,9 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
 
         outgoing = msg_type == "outgoing"
         rendered += 1
+        last_ts = row["sent_at"]
         log.debug("    #%d %s %s", rendered, msg_type, fmt_time(row["sent_at"]))
+        export_att(atts)
         inner = []
 
         if convo["type"] == "group" and not outgoing:
@@ -523,7 +569,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir):
         f'<div class="sub">{rendered} entries &middot; '
         f'<a href="../index.html">back to index</a></div>'
     )
-    return header + "\n".join(parts), rendered
+    return Rendered(header + "\n".join(parts), rendered, last_ts)
 
 
 # --------------------------------------------------------------------------
@@ -541,7 +587,8 @@ def main() -> int:
                     help="keyring secret protecting 'encryptedKey'")
     ap.add_argument("--no-attachments", action="store_true",
                     help="skip decrypting and copying attachment files")
-    ap.add_argument("--limit", type=int, help="max messages per conversation (for testing)")
+    ap.add_argument("--limit", type=int,
+                    help="stop after N rendered messages across all conversations (for testing)")
     ap.add_argument("-v", "--verbose", action="count", default=0,
                     help="log progress per conversation; repeat (-vv) for every message")
     args = ap.parse_args()
@@ -582,63 +629,41 @@ def main() -> int:
     (out_dir / "assets" / "style.css").write_text(CSS)
 
     att_root = data_dir / "attachments.noindex"
-    exported, failed, skipped_empty = 0, 0, 0
+    stats = {"exported": 0, "failed": 0}
+    skipped_empty = 0
+    remaining = args.limit
     summaries = []
 
     for pos, convo in enumerate(convos.values(), 1):
-        log.info("[%d/%d] %s", pos, len(convos), convo["title"])
-        rows = load_messages(conn, convo["id"], args.limit)
-        if not rows:
-            log.info("    nothing to render, skipped")
-            skipped_empty += 1
-            continue
+        if remaining is not None and remaining <= 0:
+            log.info("Limit of %d messages reached, %d conversations not visited",
+                     args.limit, len(convos) - pos + 1)
+            break
 
         slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
         att_dir = out_dir / "chats" / f"{slug}_files"
+        log.info("[%d/%d] %s", pos, len(convos), convo["title"])
 
-        if not args.no_attachments:
-            for row in rows:
-                for att in attachments.get(row["id"], []):
-                    src = att_root / att["path"]
-                    if not src.is_file():
-                        att["_error"] = "file missing on disk"
-                        failed += 1
-                        continue
-                    try:
-                        raw = src.read_bytes()
-                        blob = (decrypt_attachment(raw, att["localKey"], att["size"])
-                                if att.get("localKey") else raw)
-                    except Exception as exc:  # noqa: BLE001 - report and continue
-                        att["_error"] = str(exc)
-                        failed += 1
-                        continue
-                    att_dir.mkdir(parents=True, exist_ok=True)
-                    base = safe_name(att.get("fileName") or "")
-                    if not base or "." not in base:
-                        ext = (att.get("contentType") or "").split("/")[-1][:8] or "bin"
-                        base = f"{att['path'].replace('/', '_')}.{ext}"
-                    dest = att_dir / base
-                    n = 1
-                    while dest.exists():
-                        dest = att_dir / f"{dest.stem}_{n}{dest.suffix}"
-                        n += 1
-                    dest.write_bytes(blob)
-                    att["_exported"] = dest.name
-                    exported += 1
-
-        content, rendered = render_conversation(convo, rows, attachments,
-                                                name_for_aci, f"{slug}_files")
-        if not rendered:
+        result = render_conversation(
+            convo, load_messages(conn, convo["id"]), attachments, name_for_aci,
+            f"{slug}_files",
+            lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
+            remaining,
+        )
+        if not result.count:
             log.info("    nothing to render, skipped")
             skipped_empty += 1
             continue
-        log.info("    %d entries", rendered)
+        if remaining is not None:
+            remaining -= result.count
+        log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
+
         (out_dir / "chats" / f"{slug}.html").write_text(
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
-                        content=content)
+                        content=result.html)
         )
-        summaries.append((convo["title"], f"chats/{slug}.html", rendered,
-                          rows[-1]["sent_at"]))
+        summaries.append((convo["title"], f"chats/{slug}.html", result.count,
+                          result.last_ts))
 
     summaries.sort(key=lambda s: s[3] or 0, reverse=True)
     items = "\n".join(
@@ -661,8 +686,10 @@ def main() -> int:
     print(f"Wrote {len(summaries)} conversations to {out_dir}/index.html")
     if skipped_empty:
         print(f"Skipped {skipped_empty} conversations with no messages.")
+    if remaining is not None and remaining <= 0:
+        print(f"Stopped after --limit {args.limit} rendered messages.")
     if not args.no_attachments:
-        print(f"Attachments: {exported} exported, {failed} failed.")
+        print(f"Attachments: {stats['exported']} exported, {stats['failed']} failed.")
     return 0
 
 
