@@ -397,20 +397,34 @@ def load_our_aci(conn) -> str | None:
     return value.split(".")[0] if isinstance(value, str) else None
 
 
-def count_messages(conn, conversation_id: str) -> int:
-    return conn.execute("SELECT count(*) FROM messages WHERE conversationId = ?",
-                        (conversation_id,)).fetchone()[0]
+def newest_cutoff(conn, conversation_ids, limit: int) -> int | None:
+    """received_at of the limit-th newest message in these conversations, if there are that many."""
+    wanted = set(conversation_ids)
+    seen = 0
+    for row in conn.execute("SELECT conversationId, received_at FROM messages"
+                            " ORDER BY received_at DESC"):
+        if row["conversationId"] in wanted:
+            seen += 1
+            if seen >= limit:
+                return row["received_at"]
+    return None
 
 
-def load_messages(conn, conversation_id: str):
+def count_messages(conn, conversation_id: str, since: int | None = None) -> int:
+    return conn.execute("SELECT count(*) FROM messages WHERE conversationId = ?"
+                        " AND received_at >= ?",
+                        (conversation_id, since or 0)).fetchone()[0]
+
+
+def load_messages(conn, conversation_id: str, since: int | None = None):
     return conn.execute(
         """
         SELECT id, json, body, type, sent_at, received_at, sourceServiceId, isErased
         FROM messages
-        WHERE conversationId = ?
+        WHERE conversationId = ? AND received_at >= ?
         ORDER BY received_at ASC, sent_at ASC
         """,
-        (conversation_id,),
+        (conversation_id, since or 0),
     )
 
 
@@ -1169,14 +1183,12 @@ class Rendered:
 
 
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
-                        export_att, emit_chunk, budget=None) -> Rendered:
+                        export_att, emit_chunk) -> Rendered:
     chunker = Chunker(emit_chunk)
     hits = []
     rendered = 0
     last_ts = None
     for seen, row in enumerate(rows, 1):
-        if budget is not None and rendered >= budget:
-            break
         if seen % 500 == 0:
             log.info("    %d messages read, %d rendered", seen, rendered)
         try:
@@ -1352,7 +1364,7 @@ def main() -> int:
                     help="only export conversations with NAME somewhere in a contact or "
                          "group name (case insensitive)")
     ap.add_argument("--limit", type=int,
-                    help="stop after N rendered messages across all conversations (for testing)")
+                    help="only the N newest messages across all conversations (for testing)")
     ap.add_argument("--sort", choices=("recent", "name"), default="recent",
                     help="initial order of the index: last message or name (default: recent)")
     ap.add_argument("-v", "--verbose", action="count", default=0,
@@ -1411,7 +1423,7 @@ def main() -> int:
     att_root = data_dir / "attachments.noindex"
     stats = {"exported": 0, "failed": 0}
     skipped_empty = 0
-    remaining = args.limit
+    cutoff = newest_cutoff(conn, convos, args.limit) if args.limit else None
     summaries, search_msgs = [], []
 
     chats = progress(convos.values(), desc="Conversations", unit="chat", position=0)
@@ -1419,10 +1431,10 @@ def main() -> int:
         for pos, convo in enumerate(chats, 1):
             if tqdm is not None:
                 chats.set_postfix(files=stats["exported"], refresh=False)
-            if remaining is not None and remaining <= 0:
-                log.info("Limit of %d messages reached, %d conversations not visited",
-                         args.limit, len(convos) - pos + 1)
-                break
+            if cutoff is not None and not count_messages(conn, convo["id"], cutoff):
+                log.info("[%d/%d] %s: nothing newer than the --limit cutoff",
+                         pos, len(convos), convo["title"])
+                continue
 
             slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
             att_dir = out_dir / "chats" / f"{slug}_files"
@@ -1441,19 +1453,18 @@ def main() -> int:
 
             result = render_conversation(
                 convo,
-                progress(load_messages(conn, convo["id"]), total=count_messages(conn, convo["id"]),
+                progress(load_messages(conn, convo["id"], cutoff),
+                         total=count_messages(conn, convo["id"], cutoff),
                          desc=convo["title"][:30], unit="msg", leave=False, position=1),
                 attachments, name_for_aci,
                 f"{slug}_files",
                 lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
-                emit_chunk, remaining,
+                emit_chunk,
             )
             if not result.count:
                 log.info("    nothing to render, skipped")
                 skipped_empty += 1
                 continue
-            if remaining is not None:
-                remaining -= result.count
             log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
 
             (months_dir / "find.js").write_text(
@@ -1499,8 +1510,8 @@ def main() -> int:
     print(f"Wrote {len(summaries)} conversations to {out_dir}/index.html")
     if skipped_empty:
         print(f"Skipped {skipped_empty} conversations with no messages.")
-    if remaining is not None and remaining <= 0:
-        print(f"Stopped after --limit {args.limit} rendered messages.")
+    if cutoff is not None:
+        print(f"--limit {args.limit}: exported only the newest messages.")
     if not args.no_attachments:
         print(f"Attachments: {stats['exported']} exported, {stats['failed']} failed.")
     return 0
