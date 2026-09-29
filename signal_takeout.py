@@ -688,44 +688,84 @@ function initIndex() {
   search();
 }
 
-function initFind() {
-  const input = $("find");
-  if (!input) return;
+function initFind(chat) {
+  const input = $("find"), timeline = $("timeline");
+  if (!input || !timeline) return;
   const count = $("find-count");
-  let marked = [], hits = [], cur = -1;
+  const MARKED = ".msg .body:not(.deleted), .msg .caption";
+  let data = null, loading = null, toks = [], matches = [], cur = -1, gen = 0;
+  let marked = [], curEl = null;
+
+  function loadData() {
+    if (!loading) {
+      loading = new Promise((resolve) => {
+        window.__find = (list) => {
+          for (const m of list) m.push(norm(m[1]));
+          data = list;
+          resolve();
+        };
+        const tag = document.createElement("script");
+        tag.charset = "utf-8";
+        tag.onload = () => tag.remove();
+        tag.onerror = () => { tag.remove(); data = []; count.textContent = "Search data missing"; resolve(); };
+        tag.src = timeline.dataset.find;
+        document.head.append(tag);
+      });
+    }
+    return loading;
+  }
+
+  function markIn(root) {
+    if (!toks.length) return;
+    for (const e of root.querySelectorAll(MARKED)) {
+      const t = e.textContent, rs = ranges(t, toks);
+      if (!rs.length) continue;
+      e._t = t;
+      e.replaceChildren(highlight(t, rs));
+      marked.push(e);
+    }
+  }
+
+  function clearMarks() {
+    for (const e of marked) if (e.isConnected) e.textContent = e._t;
+    marked = [];
+    if (curEl) curEl.classList.remove("cur");
+    curEl = null;
+  }
 
   function show(i) {
-    if (!hits.length) { count.textContent = input.value.trim() ? "0 / 0" : ""; return; }
-    if (hits[cur]) hits[cur].classList.remove("cur");
-    cur = (i + hits.length) % hits.length;
-    hits[cur].classList.add("cur");
-    hits[cur].scrollIntoView({ block: "center" });
-    count.textContent = `${cur + 1} / ${hits.length}`;
+    if (!matches.length) { count.textContent = input.value.trim() ? "0 / 0" : ""; return; }
+    cur = (i + matches.length) % matches.length;
+    count.textContent = `${cur + 1} / ${matches.length}`;
+    const mine = ++gen;
+    chat.reveal(matches[cur]).then((e) => {
+      if (mine !== gen || !e) return;
+      if (curEl) curEl.classList.remove("cur");
+      curEl = e;
+      e.classList.add("cur");
+      e.scrollIntoView({ block: "center" });
+    });
   }
 
   function run() {
-    if (hits[cur]) hits[cur].classList.remove("cur");
-    for (const b of marked) b.textContent = b._t;
-    marked = []; hits = []; cur = -1;
-    const toks = tokens(input.value);
-    const bodies = toks.length ? document.querySelectorAll(".msg .body:not(.deleted)") : [];
-    for (const b of bodies) {
-      b._t = b.textContent;
-      const n = norm(b._t);
-      if (!toks.every((t) => n.includes(t))) continue;
-      b.replaceChildren(highlight(b._t, ranges(b._t, toks)));
-      marked.push(b);
-      hits.push(b.closest(".msg"));
-    }
+    clearMarks();
+    toks = tokens(input.value);
+    matches = toks.length ? data.filter((m) => toks.every((t) => m[2].includes(t))).map((m) => m[0]) : [];
+    markIn(timeline);
+    cur = -1;
     count.textContent = "";
     show(0);
   }
 
+  chat.onLoad(markIn);
   let timer;
-  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 120); });
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => loadData().then(run), 120);
+  });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); show(cur + (e.shiftKey ? -1 : 1)); }
-    else if (e.key === "Escape") { input.value = ""; run(); }
+    else if (e.key === "Escape") { input.value = ""; loadData().then(run); }
   });
   $("find-next").addEventListener("click", () => show(cur + 1));
   $("find-prev").addEventListener("click", () => show(cur - 1));
@@ -733,7 +773,8 @@ function initFind() {
 
 function initChat() {
   const pill = $("dayfloat"), timeline = $("timeline");
-  if (!pill || !timeline) return;
+  if (!pill || !timeline) return null;
+  const hooks = [];
   const secs = [...timeline.children].filter((e) => e.classList.contains("chunk"));
   const bar = pill.parentElement, jump = $("jump");
   const pending = new Map();
@@ -765,6 +806,7 @@ function initChat() {
       s.innerHTML = html;
       s.style.height = "";
       s._loaded = true;
+      for (const h of hooks) h(s);
       const after = s.getBoundingClientRect();
       if (before.bottom <= 0) scrollBy(0, after.height - before.height);
       return s;
@@ -806,15 +848,20 @@ function initChat() {
 
   const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(update); } };
 
-  function goto(hash) {
-    const m = /^#m(\d+)$/.exec(hash);
-    const n = m && +m[1];
-    const s = m && secs.find((x) => +x.dataset.first <= n && n <= +x.dataset.last);
-    if (!s) return;
+  function reveal(n) {
+    const have = $(`m${n}`);
+    if (have) return Promise.resolve(have);
+    const s = secs.find((x) => +x.dataset.first <= n && n <= +x.dataset.last);
+    if (!s) return Promise.resolve(null);
     pinned = s;
     s.scrollIntoView({ block: "start" });
-    load(s).then(() => {
-      const e = $(`m${n}`);
+    return load(s).then(() => $(`m${n}`));
+  }
+
+  function goto(hash) {
+    const m = /^#m(\d+)$/.exec(hash);
+    if (!m) return;
+    reveal(+m[1]).then((e) => {
       if (!e) return;
       for (const x of document.querySelectorAll(".msg.jump")) x.classList.remove("jump");
       e.classList.add("jump");
@@ -834,11 +881,12 @@ function initChat() {
     });
   }
   if (/^#m\d+$/.test(location.hash)) goto(location.hash); else update();
+  return { reveal, onLoad: (h) => hooks.push(h) };
 }
 
 initIndex();
-initFind();
-initChat();
+const chat = initChat();
+if (chat) initFind(chat);
 })();
 """
 
@@ -1407,6 +1455,10 @@ def main() -> int:
             if remaining is not None:
                 remaining -= result.count
             log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
+
+            (months_dir / "find.js").write_text(
+                "window.__find(" + json.dumps([[n, text] for n, _, text in result.hits],
+                                             ensure_ascii=False) + ");", encoding="utf-8")
 
             link = f"chats/{slug}.html"
             avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
