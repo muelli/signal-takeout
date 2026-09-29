@@ -34,6 +34,7 @@ Useful flags:
 | `--key HEX` | Supply the 64-char SQLCipher key directly |
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
 | `--no-attachments` | Text only; much faster |
+| `--export-only NAME` | Only conversations with NAME in a contact or group name, case insensitive (profile names count too) |
 | `--limit N` | Stop after N rendered messages across all conversations, for testing |
 | `--sort recent\|name` | Initial index order: last message (default) or name |
 | `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |

@@ -260,8 +260,19 @@ def load_conversations(conn) -> dict:
             "type": data.get("type") or "private",
             "serviceId": data.get("serviceId"),
             "e164": data.get("e164"),
+            "names": conversation_names(data),
         }
     return convos
+
+
+def conversation_names(data: dict) -> list[str]:
+    """Every name a conversation is known by, for --export-only matching."""
+    names = [data.get("name")]
+    for given, family in (("systemGivenName", "systemFamilyName"),
+                          ("profileName", "profileFamilyName")):
+        names += [data.get(given), data.get(family),
+                  " ".join(p for p in (data.get(given), data.get(family)) if p)]
+    return [n for n in names if isinstance(n, str) and n]
 
 
 def load_attachments(conn) -> dict:
@@ -845,6 +856,9 @@ def main() -> int:
                     help="keyring secret protecting 'encryptedKey'")
     ap.add_argument("--no-attachments", action="store_true",
                     help="skip decrypting and copying attachment files")
+    ap.add_argument("--export-only", metavar="NAME",
+                    help="only export conversations with NAME somewhere in a contact or "
+                         "group name (case insensitive)")
     ap.add_argument("--limit", type=int,
                     help="stop after N rendered messages across all conversations (for testing)")
     ap.add_argument("--sort", choices=("recent", "name"), default="recent",
@@ -882,6 +896,16 @@ def main() -> int:
         if our_aci and aci == our_aci:
             return "You"
         return aci_to_name.get(aci, aci)
+
+    if args.export_only:
+        needle = args.export_only.casefold()
+        matching = {cid: c for cid, c in convos.items()
+                    if any(needle in n.casefold() for n in c["names"])}
+        if not matching:
+            sys.exit(f"No conversation has {args.export_only!r} in its name.")
+        print(f"--export-only {args.export_only!r}: {len(matching)} of "
+              f"{len(convos)} conversations match.")
+        convos = matching
 
     out_dir = Path(args.out).expanduser()
     (out_dir / "chats").mkdir(parents=True, exist_ok=True)

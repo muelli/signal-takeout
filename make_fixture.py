@@ -28,6 +28,7 @@ KEY = "a" * 64
 ME = "00000000-0000-4000-8000-00000000000f"
 ALICE = "11111111-1111-4111-8111-111111111111"
 BOB = "22222222-2222-4222-8222-222222222222"
+TOBY = "33333333-3333-4333-8333-333333333333"
 
 
 def encrypt_local(plaintext: bytes) -> tuple[bytes, str]:
@@ -82,6 +83,8 @@ def main() -> None:
                         "profileName": "Alice", "profileFamilyName": "Anderson"}),
         ("conv-bob", {"type": "private", "serviceId": BOB, "systemGivenName": "Bob"}),
         ("conv-group", {"type": "group", "name": "Weekend Plans"}),
+        ("conv-toby", {"type": "private", "serviceId": TOBY, "systemGivenName": "Toby",
+                       "profileName": "Tobias", "profileFamilyName": "Weber"}),
         ("conv-empty", {"type": "private", "e164": "+15550000000"}),
     ]
     for cid, data in convos:
@@ -110,6 +113,7 @@ def main() -> None:
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
         ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),
+        ("m12", "conv-toby", "incoming", TOBY, now - 900_000, "Lunch tomorrow?", {}),
     ]
     for mid, cid, mtype, src, sent, body, extra in rows:
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
