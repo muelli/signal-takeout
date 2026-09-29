@@ -467,7 +467,13 @@ a { color:#2c6bed; }
 .msg { display:flex; margin:.2rem 0; }
 .msg.out { justify-content:flex-end; }
 .bubble { max-width:78%; padding:.5rem .75rem; border-radius:14px;
-  background:var(--in); }
+  background:var(--in); position:relative; }
+.copy { display:none; position:absolute; top:50%; left:100%; transform:translateY(-50%);
+  padding:.15rem .5rem; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--muted); font:inherit; font-size:.75rem;
+  cursor:pointer; white-space:nowrap; }
+.msg.out .copy { left:auto; right:100%; }
+.bubble:hover .copy, .copy:focus-visible { display:block; }
 .msg.out .bubble { background:var(--out); color:var(--out-fg); }
 .author { font-size:.75rem; font-weight:600; opacity:.75;
   margin-bottom:.15rem; }
@@ -785,6 +791,43 @@ function initFind(chat) {
   $("find-prev").addEventListener("click", () => show(cur - 1));
 }
 
+function initCopy() {
+  const timeline = $("timeline");
+  if (!timeline) return;
+  const btn = el("button", "copy", "Copy");
+  btn.type = "button";
+  btn.title = "Copy message text";
+  const textOf = (bubble) => [...bubble.querySelectorAll(".body:not(.deleted), .caption")]
+    .map((e) => e.textContent).join("\n");
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const t = document.createElement("textarea");
+      t.value = text;
+      t.style.cssText = "position:fixed;opacity:0";
+      document.body.append(t);
+      t.select();
+      document.execCommand("copy");
+      t.remove();
+    }
+  }
+
+  timeline.addEventListener("mouseover", (e) => {
+    const bubble = e.target.closest(".bubble");
+    if (!bubble || bubble === btn.parentElement) return;
+    if (textOf(bubble)) bubble.append(btn); else btn.remove();
+  });
+  let timer;
+  btn.addEventListener("click", async () => {
+    await copy(textOf(btn.parentElement));
+    btn.textContent = "Copied";
+    clearTimeout(timer);
+    timer = setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+  });
+}
+
 function initChat() {
   const pill = $("dayfloat"), timeline = $("timeline");
   if (!pill || !timeline) return null;
@@ -901,6 +944,7 @@ function initChat() {
 initIndex();
 const chat = initChat();
 if (chat) initFind(chat);
+initCopy();
 })();
 """
 
