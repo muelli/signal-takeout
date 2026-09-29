@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover - dependency check
         "Missing sqlcipher3. Run with uv:\n"
         "  uv run signal_takeout.py\n"
         "or install with:\n"
-        "  python3 -m venv .venv && .venv/bin/pip install sqlcipher3-binary cryptography"
+        "  python3 -m venv .venv && .venv/bin/pip install sqlcipher3-binary cryptography tqdm"
     )
 
 try:
@@ -1167,6 +1167,9 @@ def main() -> int:
         level=(logging.WARNING, logging.INFO, logging.DEBUG)[min(args.verbose, 2)],
         format="%(message)s", stream=sys.stderr,
     )
+
+    if tqdm is None and sys.stderr.isatty():
+        print("Tip: pip install tqdm (or use uv run) for progress bars.", file=sys.stderr)
 
     data_dir = find_data_dir(args.data_dir)
     db_path = data_dir / "sql" / "db.sqlite"
