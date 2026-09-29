@@ -495,11 +495,16 @@ mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools input, .findbar input { flex:1; min-width:0; padding:.45rem .7rem;
   border:1px solid var(--line); border-radius:8px; background:var(--card);
   color:var(--fg); font:inherit; }
-.tools select, .findbar button { padding:.4rem .6rem; border:1px solid var(--line);
+.tools select, .findbar select, .findbar button { padding:.4rem .6rem; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
 .find-count { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .msg { scroll-margin-top:4rem; }
-.msg.cur .bubble, .msg:target .bubble { outline:2px solid #f5a623; }
+.msg.cur .bubble, .msg.jump .bubble { outline:2px solid #f5a623; }
+#timeline { overflow-anchor:none; }
+.chunk { display:flow-root; scroll-margin-top:4rem; }
+.chunk-label { text-align:center; color:var(--muted); font-size:.85rem;
+  padding:1rem 0; font-style:italic; }
+.findbar select { max-width:11rem; }
 .section { color:var(--muted); font-size:.8rem; text-transform:uppercase;
   letter-spacing:.04em; margin:1rem 0 .4rem; }
 .convo-list li.hit a { display:block; }
@@ -687,8 +692,6 @@ function initFind() {
   const input = $("find");
   if (!input) return;
   const count = $("find-count");
-  const bodies = [...document.querySelectorAll(".msg .body:not(.deleted)")];
-  for (const b of bodies) b._t = b.textContent;
   let marked = [], hits = [], cur = -1;
 
   function show(i) {
@@ -705,7 +708,9 @@ function initFind() {
     for (const b of marked) b.textContent = b._t;
     marked = []; hits = []; cur = -1;
     const toks = tokens(input.value);
-    for (const b of toks.length ? bodies : []) {
+    const bodies = toks.length ? document.querySelectorAll(".msg .body:not(.deleted)") : [];
+    for (const b of bodies) {
+      b._t = b.textContent;
       const n = norm(b._t);
       if (!toks.every((t) => n.includes(t))) continue;
       b.replaceChildren(highlight(b._t, ranges(b._t, toks)));
@@ -726,34 +731,114 @@ function initFind() {
   $("find-prev").addEventListener("click", () => show(cur - 1));
 }
 
-function initDay() {
-  const pill = $("dayfloat");
-  if (!pill) return;
-  const days = document.getElementsByClassName("day");
-  const bar = pill.parentElement;
-  let queued = false;
+function initChat() {
+  const pill = $("dayfloat"), timeline = $("timeline");
+  if (!pill || !timeline) return;
+  const secs = [...timeline.children].filter((e) => e.classList.contains("chunk"));
+  const bar = pill.parentElement, jump = $("jump");
+  const pending = new Map();
+  let queued = false, pinned = null;
+  for (const s of secs) s._ph = s.firstElementChild;
+
+  window.__chunk = (id, html) => {
+    const done = pending.get(id);
+    if (done) { pending.delete(id); done(html); }
+  };
+
+  function fetchChunk(s) {
+    return new Promise((resolve, reject) => {
+      const id = s.dataset.id;
+      const tag = document.createElement("script");
+      tag.charset = "utf-8";
+      pending.set(id, resolve);
+      tag.onload = () => tag.remove();
+      tag.onerror = () => { pending.delete(id); tag.remove(); reject(new Error(s.dataset.src)); };
+      tag.src = s.dataset.src;
+      document.head.append(tag);
+    });
+  }
+
+  function load(s) {
+    if (s._p) return s._p;
+    s._p = fetchChunk(s).then((html) => {
+      const before = s.getBoundingClientRect();
+      s.innerHTML = html;
+      s.style.height = "";
+      s._loaded = true;
+      const after = s.getBoundingClientRect();
+      if (before.bottom <= 0) scrollBy(0, after.height - before.height);
+      return s;
+    }, (err) => {
+      s._ph.textContent = `Could not load ${err.message}`;
+    });
+    return s._p;
+  }
+
+  function unload(s) {
+    s.style.height = `${s.getBoundingClientRect().height}px`;
+    s.replaceChildren(s._ph);
+    s._loaded = false;
+    s._p = null;
+  }
 
   function update() {
     queued = false;
-    const edge = bar.getBoundingClientRect().bottom;
+    const edge = bar.getBoundingClientRect().bottom, vh = innerHeight;
+    let cur = -1;
+    secs.forEach((s, i) => {
+      const r = s.getBoundingClientRect();
+      if (r.top <= edge) cur = i;
+      if (r.bottom > -1.5 * vh && r.top < 2.5 * vh) load(s);
+      else if (s._loaded && s !== pinned && (r.bottom < -3 * vh || r.top > 4 * vh)) unload(s);
+    });
+    pill.hidden = cur < 0;
+    if (cur < 0) return;
+    const s = secs[cur];
+    if (jump) jump.value = s.dataset.id;
+    const days = s.getElementsByClassName("day");
     let lo = 0, hi = days.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
       if (days[mid].getBoundingClientRect().top <= edge) lo = mid + 1; else hi = mid;
     }
-    pill.hidden = lo === 0;
-    if (lo) pill.textContent = days[lo - 1].textContent;
+    pill.textContent = lo ? days[lo - 1].textContent : s.dataset.label;
   }
 
   const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(update); } };
+
+  function goto(hash) {
+    const m = /^#m(\d+)$/.exec(hash);
+    const n = m && +m[1];
+    const s = m && secs.find((x) => +x.dataset.first <= n && n <= +x.dataset.last);
+    if (!s) return;
+    pinned = s;
+    s.scrollIntoView({ block: "start" });
+    load(s).then(() => {
+      const e = $(`m${n}`);
+      if (!e) return;
+      for (const x of document.querySelectorAll(".msg.jump")) x.classList.remove("jump");
+      e.classList.add("jump");
+      e.scrollIntoView({ block: "center" });
+      schedule();
+    });
+  }
+
   addEventListener("scroll", schedule, { passive: true });
   addEventListener("resize", schedule);
-  update();
+  addEventListener("hashchange", () => goto(location.hash));
+  if (jump) {
+    jump.addEventListener("change", () => {
+      const s = secs.find((x) => x.dataset.id === jump.value);
+      s.scrollIntoView({ block: "start" });
+      schedule();
+    });
+  }
+  if (/^#m\d+$/.test(location.hash)) goto(location.hash); else update();
 }
 
 initIndex();
 initFind();
-initDay();
+initChat();
 })();
 """
 
@@ -776,6 +861,13 @@ def fmt_day(ms) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone().strftime(
         "%A, %d %B %Y"
     )
+
+
+def month_of(ms) -> tuple[str, str]:
+    if not ms:
+        return "unknown", "Unknown date"
+    d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc).astimezone()
+    return d.strftime("%Y-%m"), d.strftime("%B %Y")
 
 
 def apply_mentions(body: str, body_ranges, name_for_aci) -> str:
@@ -974,21 +1066,66 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
         log.debug("    attachment %s -> %s", att["path"], dest.name)
 
 
+CHUNK_CAP = 2000
+ROW_ESTIMATE_PX = 64
+
+
+class Chunker:
+    """Groups rendered entries into month chunks and hands each finished chunk to emit."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.chunks = []
+        self.parts = []
+        self.meta = None
+        self.last_day = None
+        self.ids = set()
+
+    def add(self, ts, html: str, n: int) -> None:
+        day = fmt_day(ts)
+        if day != self.last_day:
+            month, label = month_of(ts)
+            if (self.meta is None or month != self.meta["month"]
+                    or n - self.meta["first"] >= CHUNK_CAP):
+                self.close(n - 1)
+                self.open(month, label, n)
+            self.parts.append(f'<div class="day">{esc(day)}</div>')
+            self.last_day = day
+        self.parts.append(html)
+
+    def open(self, month: str, label: str, first: int) -> None:
+        chunk_id, k = month, 1
+        while chunk_id in self.ids:
+            k += 1
+            chunk_id = f"{month}-{k}"
+        self.ids.add(chunk_id)
+        self.meta = {"id": chunk_id, "month": month, "first": first,
+                     "label": label if k == 1 else f"{label} (part {k})"}
+
+    def close(self, last: int) -> None:
+        if self.meta is None:
+            return
+        self.meta["last"] = last
+        self.meta["count"] = last - self.meta["first"] + 1
+        self.emit(self.meta, "\n".join(self.parts))
+        self.chunks.append(self.meta)
+        self.parts, self.meta = [], None
+
+
 @dataclass
 class Rendered:
-    html: str
+    chunks: list
     count: int
     last_ts: int | None
     hits: list = field(default_factory=list)
 
 
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
-                        export_att, budget=None) -> Rendered:
-    parts = []
+                        export_att, emit_chunk, budget=None) -> Rendered:
+    chunker = Chunker(emit_chunk)
     hits = []
     rendered = 0
     last_ts = None
-    last_day = None
     for seen, row in enumerate(rows, 1):
         if budget is not None and rendered >= budget:
             break
@@ -1021,19 +1158,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         if msg_type not in ("incoming", "outgoing") or not has_content:
             text = describe_system(data) or describe_system({"type": msg_type})
             if text:
-                if fmt_day(row["sent_at"]) != last_day:
-                    last_day = fmt_day(row["sent_at"])
-                    parts.append(f'<div class="day">{esc(last_day)}</div>')
-                parts.append(f'<div class="system">{esc(text)}</div>')
                 rendered += 1
+                chunker.add(row["sent_at"], f'<div class="system">{esc(text)}</div>', rendered)
                 last_ts = row["sent_at"]
                 log.debug("    #%d system: %s", rendered, text)
             continue
-
-        day = fmt_day(row["sent_at"])
-        if day != last_day:
-            parts.append(f'<div class="day">{esc(day)}</div>')
-            last_day = day
 
         outgoing = msg_type == "outgoing"
         rendered += 1
@@ -1081,10 +1210,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
 
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
         css_class = "msg out" if outgoing else "msg"
-        parts.append(f'<div class="{css_class}" id="m{rendered}">'
-                     f'<div class="bubble">{"".join(inner)}</div></div>')
+        chunker.add(row["sent_at"], f'<div class="{css_class}" id="m{rendered}">'
+                    f'<div class="bubble">{"".join(inner)}</div></div>', rendered)
 
-    return Rendered("\n".join(parts), rendered, last_ts, hits)
+    chunker.close(rendered)
+    return Rendered(chunker.chunks, rendered, last_ts, hits)
 
 
 def avatar_html(src: str | None, title: str) -> str:
@@ -1094,7 +1224,9 @@ def avatar_html(src: str | None, title: str) -> str:
     return f'<span class="avatar ph" aria-hidden="true">{esc(initial)}</span>'
 
 
-def chat_header(convo, count: int, avatar_src: str | None) -> str:
+def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
+    jump = "".join(f'<option value="{esc(c["id"])}">{esc(c["label"])} ({c["count"]})</option>'
+                   for c in chunks)
     return (
         f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
         f"<h1>{esc(convo['title'])}</h1>"
@@ -1105,9 +1237,24 @@ def chat_header(convo, count: int, avatar_src: str | None) -> str:
         'placeholder="Search this conversation">'
         '<span class="find-count" id="find-count"></span>'
         '<button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>'
-        '<button id="find-next" type="button" aria-label="Next match">&darr;</button></div>'
+        '<button id="find-next" type="button" aria-label="Next match">&darr;</button>'
+        f'<select id="jump" aria-label="Jump to month">{jump}</select></div>'
         '<div class="dayfloat" id="dayfloat" hidden></div></div>'
     )
+
+
+def chat_timeline(chunks, months_rel: str) -> str:
+    sections = "".join(
+        f'<section class="chunk" data-id="{esc(c["id"])}" '
+        f'data-src="{esc(months_rel)}/{esc(c["id"])}.js" data-first="{c["first"]}" '
+        f'data-last="{c["last"]}" data-label="{esc(c["label"])}" '
+        f'style="height:{c["count"] * ROW_ESTIMATE_PX}px">'
+        f'<div class="chunk-label">{esc(c["label"])} &middot; {c["count"]} entries</div></section>'
+        for c in chunks
+    )
+    return (f'<div id="timeline" data-find="{esc(months_rel)}/find.js">{sections}</div>'
+            '<noscript><p class="missing">Messages are loaded in month chunks by '
+            'JavaScript. Enable it to read this conversation.</p></noscript>')
 
 
 def render_index(summaries, sort: str) -> str:
@@ -1234,6 +1381,16 @@ def main() -> int:
             log.info("[%d/%d] %s", pos, len(convos), convo["title"])
             shutil.rmtree(att_dir, ignore_errors=True)
 
+            months_rel = f"{slug}_months"
+            months_dir = out_dir / "chats" / months_rel
+            shutil.rmtree(months_dir, ignore_errors=True)
+
+            def emit_chunk(meta, html, months_dir=months_dir):
+                months_dir.mkdir(exist_ok=True)
+                (months_dir / f"{meta['id']}.js").write_text(
+                    f"window.__chunk({json.dumps(meta['id'])},"
+                    f"{json.dumps(html, ensure_ascii=False)});", encoding="utf-8")
+
             result = render_conversation(
                 convo,
                 progress(load_messages(conn, convo["id"]), total=count_messages(conn, convo["id"]),
@@ -1241,7 +1398,7 @@ def main() -> int:
                 attachments, name_for_aci,
                 f"{slug}_files",
                 lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
-                remaining,
+                emit_chunk, remaining,
             )
             if not result.count:
                 log.info("    nothing to render, skipped")
@@ -1257,8 +1414,9 @@ def main() -> int:
             (out_dir / "chats" / f"{slug}.html").write_text(
                 PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
                             content=(chat_header(convo, result.count,
-                                                 f"../{avatar_src}" if avatar_src else None)
-                                     + result.html),
+                                                 f"../{avatar_src}" if avatar_src else None,
+                                                 result.chunks)
+                                     + chat_timeline(result.chunks, months_rel)),
                             scripts='<script src="../assets/takeout.js"></script>')
             )
             search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
