@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["sqlcipher3-binary", "cryptography"]
+# dependencies = ["sqlcipher3-binary", "cryptography", "tqdm"]
 # ///
 """Export a local Signal Desktop database to static HTML.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 import hashlib
 import hmac
 import html
@@ -50,6 +51,18 @@ try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 except ImportError:  # pragma: no cover - dependency check
     sys.exit("Missing cryptography. Run with uv (uv run signal_takeout.py) or pip install cryptography")
+
+
+try:
+    from tqdm import tqdm
+    from tqdm.contrib.logging import logging_redirect_tqdm
+except ImportError:  # progress bars are optional
+    tqdm = None
+
+
+def progress(iterable, **kwargs):
+    # disable=None turns the bar off when stderr is not a terminal
+    return iterable if tqdm is None else tqdm(iterable, disable=None, **kwargs)
 
 
 # --------------------------------------------------------------------------
@@ -382,6 +395,11 @@ def load_our_aci(conn) -> str | None:
     except json.JSONDecodeError:
         return None
     return value.split(".")[0] if isinstance(value, str) else None
+
+
+def count_messages(conn, conversation_id: str) -> int:
+    return conn.execute("SELECT count(*) FROM messages WHERE conversationId = ?",
+                        (conversation_id,)).fetchone()[0]
 
 
 def load_messages(conn, conversation_id: str):
@@ -1166,45 +1184,54 @@ def main() -> int:
     remaining = args.limit
     summaries, search_msgs = [], []
 
-    for pos, convo in enumerate(convos.values(), 1):
-        if remaining is not None and remaining <= 0:
-            log.info("Limit of %d messages reached, %d conversations not visited",
-                     args.limit, len(convos) - pos + 1)
-            break
+    chats = progress(convos.values(), desc="Conversations", unit="chat", position=0)
+    with contextlib.nullcontext() if tqdm is None else logging_redirect_tqdm():
+        for pos, convo in enumerate(chats, 1):
+            if tqdm is not None:
+                chats.set_postfix(files=stats["exported"], refresh=False)
+            if remaining is not None and remaining <= 0:
+                log.info("Limit of %d messages reached, %d conversations not visited",
+                         args.limit, len(convos) - pos + 1)
+                break
 
-        slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
-        att_dir = out_dir / "chats" / f"{slug}_files"
-        log.info("[%d/%d] %s", pos, len(convos), convo["title"])
-        shutil.rmtree(att_dir, ignore_errors=True)
+            slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
+            att_dir = out_dir / "chats" / f"{slug}_files"
+            log.info("[%d/%d] %s", pos, len(convos), convo["title"])
+            shutil.rmtree(att_dir, ignore_errors=True)
 
-        result = render_conversation(
-            convo, load_messages(conn, convo["id"]), attachments, name_for_aci,
-            f"{slug}_files",
-            lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
-            remaining,
-        )
-        if not result.count:
-            log.info("    nothing to render, skipped")
-            skipped_empty += 1
-            continue
-        if remaining is not None:
-            remaining -= result.count
-        log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
+            result = render_conversation(
+                convo,
+                progress(load_messages(conn, convo["id"]), total=count_messages(conn, convo["id"]),
+                         desc=convo["title"][:30], unit="msg", leave=False, position=1),
+                attachments, name_for_aci,
+                f"{slug}_files",
+                lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
+                remaining,
+            )
+            if not result.count:
+                log.info("    nothing to render, skipped")
+                skipped_empty += 1
+                continue
+            if remaining is not None:
+                remaining -= result.count
+            log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
 
-        link = f"chats/{slug}.html"
-        avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
-        avatar_src = f"assets/avatars/{avatar}" if avatar else None
-        (out_dir / "chats" / f"{slug}.html").write_text(
-            PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
-                        content=(chat_header(convo, result.count,
-                                             f"../{avatar_src}" if avatar_src else None)
-                                 + result.html),
-                        scripts='<script src="../assets/takeout.js"></script>')
-        )
-        search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
-        summaries.append({"title": convo["title"], "link": link,
-                          "count": result.count, "last": result.last_ts,
-                          "avatar": avatar_src})
+            link = f"chats/{slug}.html"
+            avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
+            avatar_src = f"assets/avatars/{avatar}" if avatar else None
+            (out_dir / "chats" / f"{slug}.html").write_text(
+                PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
+                            content=(chat_header(convo, result.count,
+                                                 f"../{avatar_src}" if avatar_src else None)
+                                     + result.html),
+                            scripts='<script src="../assets/takeout.js"></script>')
+            )
+            search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
+            summaries.append({"title": convo["title"], "link": link,
+                              "count": result.count, "last": result.last_ts,
+                              "avatar": avatar_src})
+    if tqdm is not None:
+        chats.close()
 
     search_index = {
         "convos": [{"t": s["title"], "u": s["link"], "l": s["last"] or 0, "a": s["avatar"]}
