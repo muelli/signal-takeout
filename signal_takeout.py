@@ -29,7 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1081,14 +1081,21 @@ def describe_system(data: dict) -> str | None:
 
 
 def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None:
+    def fail(att, reason):
+        att["_error"] = reason
+        stats["failed"] += 1
+        stats["reasons"][reason] += 1
+        log.warning("    attachment failed (%s): %s %s (%s, message %s)", reason,
+                    att.get("fileName") or "", att["path"], att.get("contentType"),
+                    att.get("messageId"))
+
     for att in atts:
         if not att.get("path"):
             att["_error"] = missing_reason(att)
             continue
         src = att_root / att["path"]
         if not src.is_file():
-            att["_error"] = "file missing on disk"
-            stats["failed"] += 1
+            fail(att, "file missing on disk")
             continue
         if att["attachmentType"] == "long-message":
             try:
@@ -1110,8 +1117,7 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
         try:
             copy_stored_file(src, att, dest)
         except Exception as exc:  # noqa: BLE001 - report and continue
-            att["_error"] = str(exc)
-            stats["failed"] += 1
+            fail(att, str(exc))
             continue
         att["_exported"] = dest.name
         stats["exported"] += 1
@@ -1421,7 +1427,7 @@ def main() -> int:
     (out_dir / "assets" / "takeout.js").write_text(JS, encoding="utf-8")
 
     att_root = data_dir / "attachments.noindex"
-    stats = {"exported": 0, "failed": 0}
+    stats = {"exported": 0, "failed": 0, "reasons": Counter()}
     skipped_empty = 0
     cutoff = newest_cutoff(conn, convos, args.limit) if args.limit else None
     summaries, search_msgs = [], []
@@ -1514,6 +1520,8 @@ def main() -> int:
         print(f"--limit {args.limit}: exported only the newest messages.")
     if not args.no_attachments:
         print(f"Attachments: {stats['exported']} exported, {stats['failed']} failed.")
+        for reason, n in stats["reasons"].most_common():
+            print(f"  {n:5d}  {reason}")
     return 0
 
 
