@@ -58,6 +58,14 @@ def main() -> None:
     blob, local_key = encrypt_local(png)
     (OUT / "attachments.noindex" / "ab" / "cdef0123").write_bytes(blob)
 
+    def encrypted_avatar(name: str) -> dict:
+        blob, key = encrypt_local(png)
+        (OUT / "attachments.noindex" / "ab" / name).write_bytes(blob)
+        return {"path": f"ab/{name}", "localKey": key, "size": len(png),
+                "version": 2, "contentType": "image/png"}
+
+    (OUT / "attachments.noindex" / "ab" / "avatar-bob").write_bytes(png)
+
     db = sqlcipher.connect(str(OUT / "sql" / "db.sqlite"))
     db.execute(f"PRAGMA key = \"x'{KEY}'\"")
     db.executescript(
@@ -80,11 +88,15 @@ def main() -> None:
 
     convos = [
         ("conv-alice", {"type": "private", "serviceId": ALICE,
-                        "profileName": "Alice", "profileFamilyName": "Anderson"}),
-        ("conv-bob", {"type": "private", "serviceId": BOB, "systemGivenName": "Bob"}),
+                        "profileName": "Alice", "profileFamilyName": "Anderson",
+                        "profileAvatar": encrypted_avatar("avatar-alice")}),
+        ("conv-bob", {"type": "private", "serviceId": BOB, "systemGivenName": "Bob",
+                      "avatar": {"path": "ab/avatar-bob"}}),
         ("conv-group", {"type": "group", "name": "Weekend Plans"}),
         ("conv-toby", {"type": "private", "serviceId": TOBY, "systemGivenName": "Toby",
-                       "profileName": "Tobias", "profileFamilyName": "Weber"}),
+                       "profileName": "Tobias", "profileFamilyName": "Weber",
+                       "avatar": {"path": "ab/gone", "localKey": "AAAA"},
+                       "profileAvatar": encrypted_avatar("avatar-toby")}),
         ("conv-empty", {"type": "private", "e164": "+15550000000"}),
     ]
     for cid, data in convos:

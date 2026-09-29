@@ -33,7 +33,7 @@ Useful flags:
 | `--data-dir DIR` | Point at a specific profile (auto-detected otherwise) |
 | `--key HEX` | Supply the 64-char SQLCipher key directly |
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
-| `--no-attachments` | Text only; much faster |
+| `--no-attachments` | Text only; much faster (profile pictures are still exported) |
 | `--export-only NAME` | Only conversations with NAME in a contact or group name, case insensitive (profile names count too) |
 | `--limit N` | Stop after N rendered messages across all conversations, for testing |
 | `--sort recent\|name` | Initial index order: last message (default) or name |
@@ -77,6 +77,10 @@ The database itself is opened in SQLCipher **raw key mode**
   `systemGivenName`, else profile name, else phone number.
 - `messages` — `body` and `type` are columns; `reactions`, `quote`,
   `bodyRanges` and the rest live in the `json` blob.
+- `avatar` and `profileAvatar` in each conversation's JSON point at picture files
+  in `attachments.noindex/`, encrypted like attachments (older data is plain).
+  The contact or group avatar is preferred, as in Signal, then the profile
+  picture.
 - `message_attachments` — attachments were moved out of the message JSON in
   schema 1360, so they are read from this table.
 
@@ -90,8 +94,10 @@ than aborting the export.
 
 Text, attachments (images, video and audio inline; everything else as a
 link), reactions, quoted replies, @-mentions resolved to names, and
-delete-for-everyone tombstones. Group updates, timer changes and calls become
-one-line system entries. Edit history is not rendered — only the current
+delete-for-everyone tombstones. Contact and group pictures show next to names
+in the index, in search results and on each conversation page; conversations
+without a picture get a letter placeholder. Group updates, timer changes and
+calls become one-line system entries. Edit history is not rendered — only the current
 version of an edited message.
 
 ## Testing without real data

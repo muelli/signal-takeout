@@ -218,6 +218,35 @@ def decrypt_attachment(raw: bytes, local_key_b64: str, size: int | None) -> byte
     return padded[:-pad] if 1 <= pad <= 16 else padded
 
 
+def read_stored_file(src: Path, entry: dict) -> bytes:
+    raw = src.read_bytes()
+    if not entry.get("localKey"):
+        return raw
+    return decrypt_attachment(raw, entry["localKey"], entry.get("size"))
+
+
+def image_ext(blob: bytes) -> str:
+    for magic, ext in ((b"\x89PNG", "png"), (b"\xff\xd8", "jpg"), (b"GIF8", "gif")):
+        if blob.startswith(magic):
+            return ext
+    return "webp" if blob[:4] == b"RIFF" and blob[8:12] == b"WEBP" else "img"
+
+
+def export_avatar(convo, att_root: Path, avatar_dir: Path, slug: str) -> str | None:
+    for entry in convo["avatars"]:
+        try:
+            blob = read_stored_file(att_root / entry["path"].replace("\\", "/"), entry)
+        except (OSError, ValueError) as exc:
+            log.debug("    avatar %s unusable: %s", entry["path"], exc)
+            continue
+        avatar_dir.mkdir(parents=True, exist_ok=True)
+        dest = avatar_dir / f"{slug}.{image_ext(blob)}"
+        dest.write_bytes(blob)
+        log.debug("    avatar %s -> %s", entry["path"], dest.name)
+        return dest.name
+    return None
+
+
 def safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
     return cleaned[:120] or "file"
@@ -261,6 +290,8 @@ def load_conversations(conn) -> dict:
             "serviceId": data.get("serviceId"),
             "e164": data.get("e164"),
             "names": conversation_names(data),
+            "avatars": [a for a in (data.get("avatar"), data.get("profileAvatar"))
+                        if isinstance(a, dict) and a.get("path")],
         }
     return convos
 
@@ -344,6 +375,14 @@ a { color:#2c6bed; }
 .convo-list a { display:flex; justify-content:space-between; gap:1rem;
   padding:.75rem 1rem; text-decoration:none; color:inherit; }
 .convo-list a:hover { background:var(--in); }
+.convo-id { display:flex; align-items:center; gap:.75rem; min-width:0; }
+.avatar { width:2.5rem; height:2.5rem; border-radius:50%; object-fit:cover;
+  flex:none; }
+.avatar.ph { display:flex; align-items:center; justify-content:center;
+  background:var(--in); color:var(--muted); font-weight:600; }
+.chat-head { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; }
+.chat-head .avatar { width:3.25rem; height:3.25rem; }
+.chat-head .sub { margin-bottom:0; }
 .convo-name { font-weight:600; }
 .convo-meta { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .day { text-align:center; color:var(--muted); font-size:.78rem;
@@ -470,6 +509,17 @@ function el(tag, cls, ...kids) {
   return e;
 }
 
+function avatar(c) {
+  if (c.a) {
+    const img = el("img", "avatar");
+    img.src = c.a;
+    img.alt = "";
+    return img;
+  }
+  const initial = [...c.t].find((ch) => /[\p{L}\p{N}]/u.test(ch)) || "#";
+  return el("span", "avatar ph", initial.toUpperCase());
+}
+
 function initIndex() {
   const q = $("q");
   if (!q) return;
@@ -521,7 +571,9 @@ function initIndex() {
     if (names.length) {
       out.push(el("div", "section", `Conversations (${names.length})`));
       out.push(el("ul", "convo-list", ...names.map(({ c }) => {
-        const a = el("a", "", el("span", "convo-name", highlight(c.t, ranges(c.t, toks))),
+        const a = el("a", "",
+                     el("span", "convo-id", avatar(c),
+                        el("span", "convo-name", highlight(c.t, ranges(c.t, toks)))),
                      el("span", "convo-meta", fmt(c.l)));
         a.href = c.u;
         return el("li", "", a);
@@ -689,9 +741,7 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
             stats["failed"] += 1
             continue
         try:
-            raw = src.read_bytes()
-            blob = (decrypt_attachment(raw, att["localKey"], att["size"])
-                    if att.get("localKey") else raw)
+            blob = read_stored_file(src, att)
         except Exception as exc:  # noqa: BLE001 - report and continue
             att["_error"] = str(exc)
             stats["failed"] += 1
@@ -802,17 +852,28 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         parts.append(f'<div class="{css_class}" id="m{rendered}">'
                      f'<div class="bubble">{"".join(inner)}</div></div>')
 
-    header = (
+    return Rendered("\n".join(parts), rendered, last_ts, hits)
+
+
+def avatar_html(src: str | None, title: str) -> str:
+    if src:
+        return f'<img class="avatar" src="{esc(src)}" alt="">'
+    initial = next((ch for ch in title if ch.isalnum()), "#").upper()
+    return f'<span class="avatar ph" aria-hidden="true">{esc(initial)}</span>'
+
+
+def chat_header(convo, count: int, avatar_src: str | None) -> str:
+    return (
+        f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
         f"<h1>{esc(convo['title'])}</h1>"
-        f'<div class="sub">{rendered} entries &middot; '
-        f'<a href="../index.html">back to index</a></div>'
+        f'<div class="sub">{count} entries &middot; '
+        f'<a href="../index.html">back to index</a></div></div></div>'
         '<div class="findbar"><input id="find" type="search" autocomplete="off" '
         'placeholder="Search this conversation">'
         '<span class="find-count" id="find-count"></span>'
         '<button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>'
         '<button id="find-next" type="button" aria-label="Next match">&darr;</button></div>'
     )
-    return Rendered(header + "\n".join(parts), rendered, last_ts, hits)
 
 
 def render_index(summaries, sort: str) -> str:
@@ -820,7 +881,9 @@ def render_index(summaries, sort: str) -> str:
            else (lambda s: -(s["last"] or 0)))
     items = "\n".join(
         f'<li data-last="{s["last"] or 0}" data-name="{esc(s["title"])}">'
-        f'<a href="{esc(s["link"])}"><span class="convo-name">{esc(s["title"])}</span>'
+        f'<a href="{esc(s["link"])}"><span class="convo-id">'
+        f'{avatar_html(s["avatar"], s["title"])}'
+        f'<span class="convo-name">{esc(s["title"])}</span></span>'
         f'<span class="convo-meta">{s["count"]} msgs &middot; {esc(fmt_time(s["last"]))}</span>'
         f"</a></li>"
         for s in sorted(summaries, key=key)
@@ -944,17 +1007,23 @@ def main() -> int:
         log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
 
         link = f"chats/{slug}.html"
+        avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
+        avatar_src = f"assets/avatars/{avatar}" if avatar else None
         (out_dir / "chats" / f"{slug}.html").write_text(
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
-                        content=result.html,
+                        content=(chat_header(convo, result.count,
+                                             f"../{avatar_src}" if avatar_src else None)
+                                 + result.html),
                         scripts='<script src="../assets/takeout.js"></script>')
         )
         search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
         summaries.append({"title": convo["title"], "link": link,
-                          "count": result.count, "last": result.last_ts})
+                          "count": result.count, "last": result.last_ts,
+                          "avatar": avatar_src})
 
     search_index = {
-        "convos": [{"t": s["title"], "u": s["link"], "l": s["last"] or 0} for s in summaries],
+        "convos": [{"t": s["title"], "u": s["link"], "l": s["last"] or 0, "a": s["avatar"]}
+                   for s in summaries],
         "msgs": search_msgs,
     }
     (out_dir / "assets" / "search-index.js").write_text(
