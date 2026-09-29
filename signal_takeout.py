@@ -486,8 +486,12 @@ a { color:#2c6bed; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools, .findbar { display:flex; gap:.5rem; align-items:center; }
 .tools { margin-bottom:1rem; }
-.findbar { position:sticky; top:0; z-index:1; padding:.5rem 0;
-  background:var(--bg); }
+.stickybar { position:sticky; top:0; z-index:1; }
+.findbar { padding:.5rem 0; background:var(--bg); }
+.dayfloat { position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  margin-top:.25rem; padding:.15rem .8rem; border-radius:999px; white-space:nowrap;
+  background:var(--card); border:1px solid var(--line); color:var(--muted);
+  font-size:.75rem; box-shadow:0 1px 4px rgba(0,0,0,.15); pointer-events:none; }
 .tools input, .findbar input { flex:1; min-width:0; padding:.45rem .7rem;
   border:1px solid var(--line); border-radius:8px; background:var(--card);
   color:var(--fg); font:inherit; }
@@ -722,8 +726,34 @@ function initFind() {
   $("find-prev").addEventListener("click", () => show(cur - 1));
 }
 
+function initDay() {
+  const pill = $("dayfloat");
+  if (!pill) return;
+  const days = document.getElementsByClassName("day");
+  const bar = pill.parentElement;
+  let queued = false;
+
+  function update() {
+    queued = false;
+    const edge = bar.getBoundingClientRect().bottom;
+    let lo = 0, hi = days.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (days[mid].getBoundingClientRect().top <= edge) lo = mid + 1; else hi = mid;
+    }
+    pill.hidden = lo === 0;
+    if (lo) pill.textContent = days[lo - 1].textContent;
+  }
+
+  const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(update); } };
+  addEventListener("scroll", schedule, { passive: true });
+  addEventListener("resize", schedule);
+  update();
+}
+
 initIndex();
 initFind();
+initDay();
 })();
 """
 
@@ -1070,11 +1100,13 @@ def chat_header(convo, count: int, avatar_src: str | None) -> str:
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{count} entries &middot; '
         f'<a href="../index.html">back to index</a></div></div></div>'
-        '<div class="findbar"><input id="find" type="search" autocomplete="off" '
+        '<div class="stickybar"><div class="findbar">'
+        '<input id="find" type="search" autocomplete="off" '
         'placeholder="Search this conversation">'
         '<span class="find-count" id="find-count"></span>'
         '<button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>'
         '<button id="find-next" type="button" aria-label="Next match">&darr;</button></div>'
+        '<div class="dayfloat" id="dayfloat" hidden></div></div>'
     )
 
 
