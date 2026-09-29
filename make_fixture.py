@@ -29,6 +29,7 @@ ME = "00000000-0000-4000-8000-00000000000f"
 ALICE = "11111111-1111-4111-8111-111111111111"
 BOB = "22222222-2222-4222-8222-222222222222"
 TOBY = "33333333-3333-4333-8333-333333333333"
+CAROL = "44444444-4444-4444-8444-444444444444"
 
 
 def encrypt_local(plaintext: bytes) -> tuple[bytes, str]:
@@ -79,9 +80,29 @@ def main() -> None:
         CREATE TABLE message_attachments (messageId TEXT, editHistoryIndex INTEGER,
           attachmentType TEXT, orderInMessage INTEGER, size INTEGER,
           contentType TEXT, path TEXT, localKey TEXT, fileName TEXT,
-          width INTEGER, height INTEGER);
+          width INTEGER, height INTEGER, caption TEXT, flags INTEGER,
+          screenshotPath TEXT, screenshotLocalKey TEXT, screenshotSize INTEGER,
+          screenshotContentType TEXT, wasTooBig INTEGER, pending INTEGER,
+          error INTEGER, isCorrupted INTEGER);
         """
     )
+
+    def store(name: str, data: bytes) -> tuple[str, str]:
+        blob, key = encrypt_local(data)
+        (OUT / "attachments.noindex" / "ab" / name).write_bytes(blob)
+        return f"ab/{name}", key
+
+    def attach(mid, kind, order, ctype, fname, data, **extra):
+        path = key = None
+        size = extra.pop("size", 0)
+        if data is not None:
+            path, key = store(f"{mid}-{kind}-{order}", data)
+            size = len(data)
+        row = {"messageId": mid, "editHistoryIndex": -1, "attachmentType": kind,
+               "orderInMessage": order, "size": size, "contentType": ctype,
+               "path": path, "localKey": key, "fileName": fname, **extra}
+        db.execute(f"INSERT INTO message_attachments ({','.join(row)})"
+                   f" VALUES ({','.join('?' * len(row))})", list(row.values()))
 
     db.execute("INSERT INTO items (id, json) VALUES ('uuid_id', ?)",
                (json.dumps({"id": "uuid_id", "value": f"{ME}.1"}),))
@@ -98,6 +119,7 @@ def main() -> None:
                        "avatar": {"path": "ab/gone", "localKey": "AAAA"},
                        "profileAvatar": encrypted_avatar("avatar-toby")}),
         ("conv-empty", {"type": "private", "e164": "+15550000000"}),
+        ("conv-carol", {"type": "private", "serviceId": CAROL, "systemGivenName": "Carol"}),
     ]
     for cid, data in convos:
         db.execute("INSERT INTO conversations (id, json, type) VALUES (?,?,?)",
@@ -105,6 +127,8 @@ def main() -> None:
 
     now = int(time.time() * 1000)
     day = 86400_000
+    t0 = now - 5 * day
+    long_text = "Long message start. " + "lorem ipsum dolor sit amet " * 200 + "needle-in-the-long-text"
     rows = [
         # id, conv, type, sourceServiceId, sent_at, body, extra json
         ("m1", "conv-alice", "incoming", ALICE, now - 2 * day, "Hey, are we still on for Friday?", {}),
@@ -126,6 +150,24 @@ def main() -> None:
         ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
         ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),
         ("m12", "conv-toby", "incoming", TOBY, now - 900_000, "Lunch tomorrow?", {}),
+        # Carol's conversation exercises every attachment kind; added in time order.
+        ("m13", "conv-carol", "incoming", CAROL, t0, "Look at this", {}),
+        ("m14", "conv-carol", "incoming", CAROL, t0 + 60000, None, {}),
+        ("m15", "conv-carol", "outgoing", None, t0 + 120000, None, {}),
+        ("m16", "conv-carol", "incoming", CAROL, t0 + 180000, None, {}),
+        ("m17", "conv-carol", "incoming", CAROL, t0 + 240000, None, {}),
+        ("m18", "conv-carol", "incoming", CAROL, t0 + 300000, long_text[:2048], {}),
+        ("m19", "conv-carol", "outgoing", None, t0 + 360000, "Same map again",
+         {"quote": {"authorAci": ME, "text": "",
+                    "attachments": [{"contentType": "image/png", "fileName": "map.png"}]}}),
+        ("m20", "conv-carol", "incoming", CAROL, t0 + 420000, "https://example.com/a",
+         {"preview": [{"url": "https://example.com/a", "title": "Example Domain",
+                       "description": "Illustrative examples"}]}),
+        ("m21", "conv-carol", "incoming", CAROL, t0 + 480000, None,
+         {"sticker": {"packId": "aa", "stickerId": 1, "emoji": "\U0001F389"}}),
+        ("m22", "conv-carol", "incoming", CAROL, t0 + 540000, None,
+         {"contact": [{"name": {"givenName": "Dana", "familyName": "Diaz"},
+                       "number": [{"value": "+15551234567", "type": 1}]}]}),
     ]
     for mid, cid, mtype, src, sent, body, extra in rows:
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
@@ -143,6 +185,22 @@ def main() -> None:
         " VALUES ('m3', -1, 'attachment', 0, ?, 'image/png', 'ab/cdef0123', ?, 'map.png', 1, 1)",
         (len(png), local_key),
     )
+
+    poster, poster_key = store("m13-poster", png)
+    attach("m13", "attachment", 0, "video/mp4", "beach.mp4", secrets.token_bytes(2_600_000),
+           caption="Dog at the beach", screenshotPath=poster, screenshotLocalKey=poster_key,
+           screenshotSize=len(png), screenshotContentType="image/png", width=640, height=360)
+    attach("m14", "attachment", 0, "application/pdf", "Quarterly Report \u00dc.pdf",
+           b"%PDF-1.4\n" + secrets.token_bytes(1000))
+    attach("m15", "attachment", 0, "audio/aac", None, secrets.token_bytes(5000), flags=1)
+    attach("m16", "attachment", 0, "video/mp4", None, secrets.token_bytes(3000), flags=8)
+    attach("m17", "attachment", 0, "application/zip", "huge.zip", None,
+           size=900_000_000, wasTooBig=1)
+    attach("m18", "long-message", 0, "text/x-signal-plain", None, long_text.encode())
+    attach("m19", "quote", 0, "image/png", "map.png", png)
+    attach("m20", "preview", 0, "image/png", None, png)
+    attach("m21", "sticker", 0, "image/png", None, png)
+    attach("m22", "contact", 0, "image/png", None, png)
 
     db.commit()
     db.close()
