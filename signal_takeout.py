@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -504,6 +505,7 @@ a { color:#2c6bed; }
 .contact { margin-top:.35rem; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
 [hidden] { display:none !important; }
+.jserror { background:#b3261e; color:#fff; padding:.5rem 1rem; font-size:.85rem; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools, .findbar { display:flex; gap:.5rem; align-items:center; }
 .tools { margin-bottom:1rem; }
@@ -624,6 +626,20 @@ function avatar(c) {
   }
   const initial = [...c.t].find((ch) => /[\p{L}\p{N}]/u.test(ch)) || "#";
   return el("span", "avatar ph", initial.toUpperCase());
+}
+
+function reportErrors() {
+  const show = (msg) => {
+    let b = $("jserror");
+    if (!b) {
+      b = el("div", "jserror");
+      b.id = "jserror";
+      document.body.prepend(b);
+    }
+    b.textContent = msg;
+  };
+  addEventListener("error", (e) => show(`Script error: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+  addEventListener("unhandledrejection", (e) => show(`Script error: ${e.reason}`));
 }
 
 function initIndex() {
@@ -837,7 +853,7 @@ function initChat() {
   const bar = pill.parentElement, jump = $("jump");
   const pending = new Map();
   let queued = false, pinned = null;
-  for (const s of secs) s._ph = s.firstElementChild;
+  for (const s of secs) { s._ph = s.firstElementChild; s._label = s._ph.textContent; }
 
   window.__chunk = (id, html) => {
     const done = pending.get(id);
@@ -857,9 +873,16 @@ function initChat() {
     });
   }
 
+  function stuck(s, why) {
+    s._ph.textContent = `${s.dataset.label}: ${why} (${s.dataset.src})`;
+    console.error(`chunk ${s.dataset.id}: ${why}`);
+  }
+
   function load(s) {
     if (s._p) return s._p;
+    const wait = setTimeout(() => stuck(s, "no response after 15 s"), 15000);
     s._p = fetchChunk(s).then((html) => {
+      clearTimeout(wait);
       const before = s.getBoundingClientRect();
       s.innerHTML = html;
       s.style.height = "";
@@ -868,14 +891,17 @@ function initChat() {
       const after = s.getBoundingClientRect();
       if (before.bottom <= 0) scrollBy(0, after.height - before.height);
       return s;
-    }, (err) => {
-      s._ph.textContent = `Could not load ${err.message}`;
+    }).catch((err) => {
+      clearTimeout(wait);
+      if (s._loaded) throw err;
+      stuck(s, `could not load, ${err && err.message}`);
     });
     return s._p;
   }
 
   function unload(s) {
     s.style.height = `${s.getBoundingClientRect().height}px`;
+    s._ph.textContent = s._label;
     s.replaceChildren(s._ph);
     s._loaded = false;
     s._p = null;
@@ -942,6 +968,7 @@ function initChat() {
   return { reveal, onLoad: (h) => hooks.push(h) };
 }
 
+reportErrors();
 initIndex();
 const chat = initChat();
 if (chat) initFind(chat);
@@ -1358,16 +1385,16 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
     )
 
 
-def chat_timeline(chunks, months_rel: str) -> str:
+def chat_timeline(chunks, months_rel: str, build: str) -> str:
     sections = "".join(
         f'<section class="chunk" data-id="{esc(c["id"])}" '
-        f'data-src="{esc(months_rel)}/{esc(c["id"])}.js" data-first="{c["first"]}" '
+        f'data-src="{esc(months_rel)}/{esc(c["id"])}.js?v={build}" data-first="{c["first"]}" '
         f'data-last="{c["last"]}" data-label="{esc(c["label"])}" '
         f'style="height:{c["count"] * ROW_ESTIMATE_PX}px">'
         f'<div class="chunk-label">{esc(c["label"])} &middot; {c["count"]} entries</div></section>'
         for c in chunks
     )
-    return (f'<div id="timeline" data-find="{esc(months_rel)}/find.js">{sections}</div>'
+    return (f'<div id="timeline" data-find="{esc(months_rel)}/find.js?v={build}">{sections}</div>'
             '<noscript><p class="missing">Messages are loaded in month chunks by '
             'JavaScript. Enable it to read this conversation.</p></noscript>')
 
@@ -1470,6 +1497,7 @@ def main() -> int:
         convos = matching
 
     out_dir = Path(args.out).expanduser()
+    build = str(int(time.time()))
     (out_dir / "chats").mkdir(parents=True, exist_ok=True)
     (out_dir / "assets").mkdir(exist_ok=True)
     (out_dir / "assets" / "style.css").write_text(CSS)
@@ -1530,12 +1558,12 @@ def main() -> int:
             avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
             avatar_src = f"assets/avatars/{avatar}" if avatar else None
             (out_dir / "chats" / f"{slug}.html").write_text(
-                PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
+                PAGE.format(title=esc(convo["title"]), css=f"../assets/style.css?v={build}",
                             content=(chat_header(convo, result.count,
                                                  f"../{avatar_src}" if avatar_src else None,
                                                  result.chunks)
-                                     + chat_timeline(result.chunks, months_rel)),
-                            scripts='<script src="../assets/takeout.js"></script>')
+                                     + chat_timeline(result.chunks, months_rel, build)),
+                            scripts=f'<script src="../assets/takeout.js?v={build}"></script>')
             )
             search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
             summaries.append({"title": convo["title"], "link": link,
@@ -1555,10 +1583,10 @@ def main() -> int:
         encoding="utf-8",
     )
     (out_dir / "index.html").write_text(
-        PAGE.format(title="Signal export", css="assets/style.css",
+        PAGE.format(title="Signal export", css=f"assets/style.css?v={build}",
                     content=render_index(summaries, args.sort),
-                    scripts='<script src="assets/search-index.js" charset="utf-8"></script>'
-                            '<script src="assets/takeout.js"></script>')
+                    scripts=f'<script src="assets/search-index.js?v={build}" charset="utf-8"></script>'
+                            f'<script src="assets/takeout.js?v={build}"></script>')
     )
 
     conn.close()

@@ -63,8 +63,15 @@ after scrolling, that `#mN` gets the `jump` class, and find counts
 ("1 / 60", prev wraps to the newest). Wait about 300 to 450 ms after events
 (find is debounced and chunks load through script tags).
 `Chunker` can be unit tested by importing the module with a small `CHUNK_CAP`.
-No real browser has been used yet, so CSS, sticky positioning and scroll
-compensation are unseen.
+Real browsers work in containers too (debian:stable-slim, apt inside the
+container): `chromium --headless --no-sandbox --virtual-time-budget=6000
+--dump-dom file:///...#m50` for a quick DOM check, and WebKitGTK or Epiphany
+through `WebKitWebDriver` under `xvfb-run` (Epiphany: browserName Epiphany,
+binary /usr/bin/epiphany, arg --automation-mode, under `dbus-run-session`;
+drive inputs with `execute_script`, since `send_keys` fails there). The user
+reads exports in Epiphany. Chunk loading, click-through from index search and
+`#mN` were verified this way on a 30000 message conversation. Screenshots and
+visual layout are still unchecked.
 
 To see tqdm bars, stderr must be a real terminal. `podman run -t` plus
 `script` sets `COLUMNS=-1`, which makes tqdm print nothing. Drive the run
@@ -169,6 +176,10 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - `--no-attachments` still exports avatars (they are tiny).
 - The whole search index is held in memory and written in one file; a very
   large profile may want sharding.
+- Asset, chunk and find URLs carry `?v=<export time>` so a browser cannot pair
+  new pages with a stale cached `takeout.js` after a re-export into the same
+  folder. Chunk load failures and stalls (15 s) show on the placeholder, and
+  uncaught script errors show as a red banner (`reportErrors`).
 - Chunk height estimates (64 px per entry) are rough, so the scrollbar length
   shifts as months load. An `<noscript>` note says JS is needed.
 - Attachment failures are logged as warnings with reason, file and message id,
