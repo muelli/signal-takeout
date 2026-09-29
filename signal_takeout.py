@@ -22,6 +22,7 @@ import hmac
 import html
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -287,8 +288,8 @@ def export_avatar(convo, att_root: Path, avatar_dir: Path, slug: str) -> str | N
     return None
 
 
-def safe_name(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+def safe_name(name: str, unicode: bool = False) -> str:
+    cleaned = re.sub(r"[^\w.-]+" if unicode else r"[^A-Za-z0-9._-]+", "_", name).strip("._")
     return cleaned[:120] or "file"
 
 
@@ -781,10 +782,11 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
             stats["failed"] += 1
             continue
         att_dir.mkdir(parents=True, exist_ok=True)
-        base = safe_name(att.get("fileName") or "")
+        base = safe_name(att["fileName"], unicode=True) if att.get("fileName") else ""
         if not base or "." not in base:
-            ext = (att.get("contentType") or "").split("/")[-1][:8] or "bin"
-            base = f"{att['path'].replace('/', '_')}.{ext}"
+            ctype = (att.get("contentType") or "").split(";")[0].strip()
+            base = (base or att["path"].replace("/", "_")) + (
+                mimetypes.guess_extension(ctype) or ".bin")
         dest = att_dir / base
         n = 1
         while dest.exists():
