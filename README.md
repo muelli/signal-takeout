@@ -43,7 +43,9 @@ Useful flags:
 The index lists conversations by last message and can be re-sorted by name from
 the page. The search box works offline and matches every word you type.
 Conversation names rank above message text, and message hits link straight to
-the message. Matching ignores case and accents.
+the message. Each conversation page also has its own search box with
+previous and next buttons (Enter and Shift+Enter work too). Matching ignores
+case and accents.
 
 The search data lives in `assets/search-index.js` next to the pages, so keep
 the export folder together.

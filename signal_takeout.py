@@ -358,14 +358,18 @@ a { color:#2c6bed; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
 [hidden] { display:none !important; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
-.tools { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; }
-.tools input { flex:1; min-width:0; padding:.45rem .7rem;
+.tools, .findbar { display:flex; gap:.5rem; align-items:center; }
+.tools { margin-bottom:1rem; }
+.findbar { position:sticky; top:0; z-index:1; padding:.5rem 0;
+  background:var(--bg); }
+.tools input, .findbar input { flex:1; min-width:0; padding:.45rem .7rem;
   border:1px solid var(--line); border-radius:8px; background:var(--card);
   color:var(--fg); font:inherit; }
-.tools select { padding:.4rem .6rem; border:1px solid var(--line);
+.tools select, .findbar button { padding:.4rem .6rem; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
+.find-count { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .msg { scroll-margin-top:4rem; }
-.msg:target .bubble { outline:2px solid #f5a623; }
+.msg.cur .bubble, .msg:target .bubble { outline:2px solid #f5a623; }
 .section { color:var(--muted); font-size:.8rem; text-transform:uppercase;
   letter-spacing:.04em; margin:1rem 0 .4rem; }
 .convo-list li.hit a { display:block; }
@@ -536,7 +540,51 @@ function initIndex() {
   search();
 }
 
+function initFind() {
+  const input = $("find");
+  if (!input) return;
+  const count = $("find-count");
+  const bodies = [...document.querySelectorAll(".msg .body:not(.deleted)")];
+  for (const b of bodies) b._t = b.textContent;
+  let marked = [], hits = [], cur = -1;
+
+  function show(i) {
+    if (!hits.length) { count.textContent = input.value.trim() ? "0 / 0" : ""; return; }
+    if (hits[cur]) hits[cur].classList.remove("cur");
+    cur = (i + hits.length) % hits.length;
+    hits[cur].classList.add("cur");
+    hits[cur].scrollIntoView({ block: "center" });
+    count.textContent = `${cur + 1} / ${hits.length}`;
+  }
+
+  function run() {
+    if (hits[cur]) hits[cur].classList.remove("cur");
+    for (const b of marked) b.textContent = b._t;
+    marked = []; hits = []; cur = -1;
+    const toks = tokens(input.value);
+    for (const b of toks.length ? bodies : []) {
+      const n = norm(b._t);
+      if (!toks.every((t) => n.includes(t))) continue;
+      b.replaceChildren(highlight(b._t, ranges(b._t, toks)));
+      marked.push(b);
+      hits.push(b.closest(".msg"));
+    }
+    count.textContent = "";
+    show(0);
+  }
+
+  let timer;
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 120); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); show(cur + (e.shiftKey ? -1 : 1)); }
+    else if (e.key === "Escape") { input.value = ""; run(); }
+  });
+  $("find-next").addEventListener("click", () => show(cur + 1));
+  $("find-prev").addEventListener("click", () => show(cur - 1));
+}
+
 initIndex();
+initFind();
 })();
 """
 
@@ -747,6 +795,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{rendered} entries &middot; '
         f'<a href="../index.html">back to index</a></div>'
+        '<div class="findbar"><input id="find" type="search" autocomplete="off" '
+        'placeholder="Search this conversation">'
+        '<span class="find-count" id="find-count"></span>'
+        '<button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>'
+        '<button id="find-next" type="button" aria-label="Next match">&darr;</button></div>'
     )
     return Rendered(header + "\n".join(parts), rendered, last_ts, hits)
 
@@ -869,7 +922,8 @@ def main() -> int:
         link = f"chats/{slug}.html"
         (out_dir / "chats" / f"{slug}.html").write_text(
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
-                        content=result.html, scripts="")
+                        content=result.html,
+                        scripts='<script src="../assets/takeout.js"></script>')
         )
         search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
         summaries.append({"title": convo["title"], "link": link,
