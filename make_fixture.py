@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["sqlcipher3-binary", "cryptography"]
+# ///
 """Build a synthetic Signal-shaped data dir to exercise signal_takeout.py.
 
 Mirrors the parts of Signal Desktop's schema the exporter touches: an

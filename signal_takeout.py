@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.9"
+# dependencies = ["sqlcipher3-binary", "cryptography"]
+# ///
 """Export a local Signal Desktop database to static HTML.
 
 Reads ~/.var/app/org.signal.Signal/config/Signal (or the native equivalent),
@@ -30,14 +34,16 @@ try:
     from sqlcipher3 import dbapi2 as sqlcipher
 except ImportError:  # pragma: no cover - dependency check
     sys.exit(
-        "Missing sqlcipher3. Install with:\n"
+        "Missing sqlcipher3. Run with uv:\n"
+        "  uv run signal_takeout.py\n"
+        "or install with:\n"
         "  python3 -m venv .venv && .venv/bin/pip install sqlcipher3-binary cryptography"
     )
 
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 except ImportError:  # pragma: no cover - dependency check
-    sys.exit("Missing cryptography. Install with: pip install cryptography")
+    sys.exit("Missing cryptography. Run with uv (uv run signal_takeout.py) or pip install cryptography")
 
 
 # --------------------------------------------------------------------------

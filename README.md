@@ -5,18 +5,22 @@ conversation plus an index, with attachments decrypted alongside.
 
 Reads only your own installation. Nothing leaves the machine.
 
-## Install
+## Use
+
+With [uv](https://docs.astral.sh/uv/), dependencies are declared in the script
+header and installed on demand:
+
+```sh
+uv run signal_takeout.py -o ~/signal-export
+xdg-open ~/signal-export/index.html
+```
+
+Without uv:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install sqlcipher3-binary cryptography
-```
-
-## Use
-
-```sh
 .venv/bin/python signal_takeout.py -o ~/signal-export
-xdg-open ~/signal-export/index.html
 ```
 
 **Close Signal first.** The database is opened read-only, but Signal writes
@@ -81,6 +85,6 @@ version of an edited message.
 including a genuinely encrypted attachment:
 
 ```sh
-.venv/bin/python make_fixture.py /tmp/fake-signal
-.venv/bin/python signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export
+uv run make_fixture.py /tmp/fake-signal
+uv run signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export
 ```
