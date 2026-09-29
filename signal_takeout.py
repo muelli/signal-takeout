@@ -1032,6 +1032,7 @@ def main() -> int:
         slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
         att_dir = out_dir / "chats" / f"{slug}_files"
         log.info("[%d/%d] %s", pos, len(convos), convo["title"])
+        shutil.rmtree(att_dir, ignore_errors=True)
 
         result = render_conversation(
             convo, load_messages(conn, convo["id"]), attachments, name_for_aci,
