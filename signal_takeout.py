@@ -457,9 +457,10 @@ a { color:#2c6bed; }
   flex:none; }
 .avatar.ph { display:flex; align-items:center; justify-content:center;
   background:var(--in); color:var(--muted); font-weight:600; }
-.chat-head { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; }
-.chat-head .avatar { width:3.25rem; height:3.25rem; }
-.chat-head .sub { margin-bottom:0; }
+.chat-head { display:flex; align-items:center; gap:.75rem; padding-top:.5rem; }
+.chat-head .avatar { width:2.5rem; height:2.5rem; }
+.chat-head h1 { font-size:1.1rem; line-height:1.2; margin:0; }
+.chat-head .sub { margin-bottom:0; font-size:.8rem; }
 .convo-name { font-weight:600; }
 .convo-meta { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .day { text-align:center; color:var(--muted); font-size:.78rem;
@@ -506,7 +507,7 @@ a { color:#2c6bed; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools, .findbar { display:flex; gap:.5rem; align-items:center; }
 .tools { margin-bottom:1rem; }
-.stickybar { position:sticky; top:0; z-index:1; }
+.stickybar { position:sticky; top:0; z-index:1; background:var(--bg); }
 .findbar { padding:.5rem 0; background:var(--bg); }
 .dayfloat { position:absolute; top:100%; left:50%; transform:translateX(-50%);
   margin-top:.25rem; padding:.15rem .8rem; border-radius:999px; white-space:nowrap;
@@ -518,10 +519,10 @@ mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools select, .findbar select, .findbar button { padding:.4rem .6rem; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
 .find-count { color:var(--muted); font-size:.8rem; white-space:nowrap; }
-.msg { scroll-margin-top:4rem; }
+.msg { scroll-margin-top:7rem; }
 .msg.cur .bubble, .msg.jump .bubble { outline:2px solid #f5a623; }
 #timeline { overflow-anchor:none; }
-.chunk { display:flow-root; scroll-margin-top:4rem; }
+.chunk { display:flow-root; scroll-margin-top:7rem; }
 .chunk-label { text-align:center; color:var(--muted); font-size:.85rem;
   padding:1rem 0; font-style:italic; }
 .findbar select { max-width:11rem; }
@@ -1338,11 +1339,12 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
     jump = "".join(f'<option value="{esc(c["id"])}">{esc(c["label"])} ({c["count"]})</option>'
                    for c in chunks)
     return (
+        '<div class="stickybar">'
         f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{count} entries &middot; '
         f'<a href="../index.html">back to index</a></div></div></div>'
-        '<div class="stickybar"><div class="findbar">'
+        '<div class="findbar">'
         '<input id="find" type="search" autocomplete="off" '
         'placeholder="Search this conversation">'
         '<span class="find-count" id="find-count"></span>'
