@@ -1139,6 +1139,9 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
             att["_error"] = missing_reason(att)
             continue
         src = att_root / att["path"]
+        if att["attachmentType"] == "long-message" and not src.is_file():
+            log.debug("    long message file %s is gone, body already holds the text", att["path"])
+            continue
         if not src.is_file():
             fail(att, "file missing on disk")
             continue

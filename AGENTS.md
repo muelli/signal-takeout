@@ -147,8 +147,11 @@ flipped byte, a truncated file and a tiny file, which must all raise
 - Message attachments come from the `message_attachments` table (schema 1360+),
   not the message JSON. `attachmentType` is one of `attachment`,
   `long-message`, `quote`, `preview`, `contact`, `sticker`.
-- `messages.body` is truncated for long texts. The full text is a
-  `long-message` attachment with MIME `text/x-signal-plain`, UTF-8.
+- `messages.body` is truncated for long texts until the `long-message`
+  attachment (MIME `text/x-signal-plain`, UTF-8) is downloaded. Then Signal
+  writes the full text into `body` and deletes the file
+  (`AttachmentDownloads.preload.ts`, `addAttachmentToMessage`), so a
+  `long-message` row whose file is missing is normal and not a failure.
 - `flags` is a bit set: 1 voice message, 2 borderless, 8 GIF (`SignalService.proto`).
 - Videos have `screenshotPath`/`screenshotLocalKey`/`screenshotSize` for a
   poster frame. Rows with `path` NULL were never downloaded; `wasTooBig`,
