@@ -195,34 +195,74 @@ def open_db(db_path: Path, key: str):
 # --------------------------------------------------------------------------
 
 
-def decrypt_attachment(raw: bytes, local_key_b64: str, size: int | None) -> bytes:
-    keys = base64.b64decode(local_key_b64)
+CHUNK = 1 << 20
+
+
+def iter_stored_file(src: Path, entry: dict):
+    """Yield plaintext chunks. The MAC is verified before the last chunk is
+    yielded, so callers must discard everything if this raises."""
+    if not entry.get("localKey"):
+        with src.open("rb") as f:
+            while chunk := f.read(CHUNK):
+                yield chunk
+        return
+
+    keys = base64.b64decode(entry["localKey"])
     if len(keys) != 64:
         raise ValueError(f"localKey should be 64 bytes, got {len(keys)}")
-    aes_key, mac_key = keys[:32], keys[32:]
-
-    if len(raw) < 48:
+    total = src.stat().st_size
+    if total < 48:
         raise ValueError("attachment too short to contain IV and MAC")
-    iv, ciphertext, their_mac = raw[:16], raw[16:-32], raw[-32:]
 
-    our_mac = hmac.new(mac_key, raw[:-32], hashlib.sha256).digest()
-    if not hmac.compare_digest(our_mac, their_mac):
-        raise ValueError("MAC mismatch - file corrupt or wrong key")
+    size = entry.get("size")
+    limit = size if isinstance(size, int) and size >= 0 else None
+    mac = hmac.new(keys[32:], digestmod=hashlib.sha256)
+    held = b""
+    emitted = 0
+    with src.open("rb") as f:
+        iv = f.read(16)
+        mac.update(iv)
+        decryptor = Cipher(algorithms.AES(keys[:32]), modes.CBC(iv)).decryptor()
+        left = total - 48
+        while left:
+            block = f.read(min(CHUNK, left))
+            if not block:
+                raise ValueError("attachment truncated")
+            left -= len(block)
+            mac.update(block)
+            held += decryptor.update(block)
+            ready, held = held[:-16], held[-16:]
+            if limit is not None:
+                ready = ready[:limit - emitted]
+            if ready:
+                emitted += len(ready)
+                yield ready
+        held += decryptor.finalize()
+        if not hmac.compare_digest(mac.digest(), f.read(32)):
+            raise ValueError("MAC mismatch - file corrupt or wrong key")
 
-    decryptor = Cipher(algorithms.AES(aes_key), modes.CBC(iv)).decryptor()
-    padded = decryptor.update(ciphertext) + decryptor.finalize()
-
-    if size is not None and 0 <= size <= len(padded):
-        return padded[:size]
-    pad = padded[-1] if padded else 0
-    return padded[:-pad] if 1 <= pad <= 16 else padded
+    if limit is not None and emitted + len(held) >= limit:
+        held = held[:limit - emitted]
+    else:
+        pad = held[-1] if held else 0
+        held = held[:-pad] if 1 <= pad <= 16 else held
+    if held:
+        yield held
 
 
 def read_stored_file(src: Path, entry: dict) -> bytes:
-    raw = src.read_bytes()
-    if not entry.get("localKey"):
-        return raw
-    return decrypt_attachment(raw, entry["localKey"], entry.get("size"))
+    return b"".join(iter_stored_file(src, entry))
+
+
+def copy_stored_file(src: Path, entry: dict, dest: Path) -> None:
+    part = dest.with_name(dest.name + ".part")
+    try:
+        with part.open("wb") as out:
+            for chunk in iter_stored_file(src, entry):
+                out.write(chunk)
+        part.replace(dest)
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def image_ext(blob: bytes) -> str:
@@ -740,12 +780,6 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
             att["_error"] = "file missing on disk"
             stats["failed"] += 1
             continue
-        try:
-            blob = read_stored_file(src, att)
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            att["_error"] = str(exc)
-            stats["failed"] += 1
-            continue
         att_dir.mkdir(parents=True, exist_ok=True)
         base = safe_name(att.get("fileName") or "")
         if not base or "." not in base:
@@ -756,7 +790,12 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
         while dest.exists():
             dest = att_dir / f"{dest.stem}_{n}{dest.suffix}"
             n += 1
-        dest.write_bytes(blob)
+        try:
+            copy_stored_file(src, att, dest)
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            att["_error"] = str(exc)
+            stats["failed"] += 1
+            continue
         att["_exported"] = dest.name
         stats["exported"] += 1
         log.debug("    attachment %s -> %s", att["path"], dest.name)
