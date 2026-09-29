@@ -30,6 +30,7 @@ ALICE = "11111111-1111-4111-8111-111111111111"
 BOB = "22222222-2222-4222-8222-222222222222"
 TOBY = "33333333-3333-4333-8333-333333333333"
 CAROL = "44444444-4444-4444-8444-444444444444"
+DAVE = "55555555-5555-4555-8555-555555555555"
 
 
 def encrypt_local(plaintext: bytes) -> tuple[bytes, str]:
@@ -120,6 +121,7 @@ def main() -> None:
                        "profileAvatar": encrypted_avatar("avatar-toby")}),
         ("conv-empty", {"type": "private", "e164": "+15550000000"}),
         ("conv-carol", {"type": "private", "serviceId": CAROL, "systemGivenName": "Carol"}),
+        ("conv-dave", {"type": "private", "serviceId": DAVE, "systemGivenName": "Dave"}),
     ]
     for cid, data in convos:
         db.execute("INSERT INTO conversations (id, json, type) VALUES (?,?,?)",
@@ -169,6 +171,12 @@ def main() -> None:
          {"contact": [{"name": {"givenName": "Dana", "familyName": "Diaz"},
                        "number": [{"value": "+15551234567", "type": 1}]}]}),
     ]
+    # Dave spans about four months, so his page has several month chunks.
+    for i in range(60):
+        out = i % 3 == 2
+        body = f"Dave message {i}" + (" archive-needle" if i == 1 else "")
+        rows.append((f"d{i}", "conv-dave", "outgoing" if out else "incoming",
+                     None if out else DAVE, now - (150 - 2 * i) * day + i * 1000, body, {}))
     for mid, cid, mtype, src, sent, body, extra in rows:
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
         if body is not None:
