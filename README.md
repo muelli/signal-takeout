@@ -97,8 +97,8 @@ link), reactions, quoted replies, @-mentions resolved to names, and
 delete-for-everyone tombstones. Contact and group pictures show next to names
 in the index, in search results and on each conversation page; conversations
 without a picture get a letter placeholder. Group updates, timer changes and
-calls become one-line system entries. Edit history is not rendered — only the current
-version of an edited message.
+calls become one-line system entries. Edit history is not rendered; only the
+current version of an edited message.
 
 ## Testing without real data
 
