@@ -356,13 +356,34 @@ a { color:#2c6bed; }
   display:block; }
 .att-file { display:inline-block; margin-top:.35rem; font-size:.85rem; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
+.tools { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; }
+.tools select { padding:.4rem .6rem; border:1px solid var(--line);
+  border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
 """
 
 PAGE = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title><link rel="stylesheet" href="{css}"></head>
-<body><div class="wrap">{content}</div></body></html>
+<body><div class="wrap">{content}</div>{scripts}</body></html>
+"""
+
+JS = r"""(() => {
+const list = document.getElementById("list");
+const sort = document.getElementById("sort");
+if (!list || !sort) return;
+
+function sortList() {
+  const items = [...list.children];
+  items.sort(sort.value === "name"
+    ? (a, b) => a.dataset.name.localeCompare(b.dataset.name, undefined, { sensitivity: "base" })
+    : (a, b) => b.dataset.last - a.dataset.last);
+  list.append(...items);
+}
+
+sort.addEventListener("change", sortList);
+sortList();
+})();
 """
 
 
@@ -572,6 +593,30 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
     return Rendered(header + "\n".join(parts), rendered, last_ts)
 
 
+def render_index(summaries, sort: str) -> str:
+    key = ((lambda s: s["title"].casefold()) if sort == "name"
+           else (lambda s: -(s["last"] or 0)))
+    items = "\n".join(
+        f'<li data-last="{s["last"] or 0}" data-name="{esc(s["title"])}">'
+        f'<a href="{esc(s["link"])}"><span class="convo-name">{esc(s["title"])}</span>'
+        f'<span class="convo-meta">{s["count"]} msgs &middot; {esc(fmt_time(s["last"]))}</span>'
+        f"</a></li>"
+        for s in sorted(summaries, key=key)
+    )
+    options = "".join(
+        f'<option value="{value}"{" selected" if value == sort else ""}>{label}</option>'
+        for value, label in (("recent", "Last message"), ("name", "Name"))
+    )
+    return (
+        f"<h1>Signal export</h1>"
+        f'<div class="sub">{len(summaries)} conversations &middot; '
+        f"generated {esc(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div>"
+        '<div class="tools">'
+        f'<label>Sort <select id="sort">{options}</select></label></div>'
+        f'<ul class="convo-list" id="list">{items}</ul>'
+    )
+
+
 # --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
@@ -589,6 +634,8 @@ def main() -> int:
                     help="skip decrypting and copying attachment files")
     ap.add_argument("--limit", type=int,
                     help="stop after N rendered messages across all conversations (for testing)")
+    ap.add_argument("--sort", choices=("recent", "name"), default="recent",
+                    help="initial order of the index: last message or name (default: recent)")
     ap.add_argument("-v", "--verbose", action="count", default=0,
                     help="log progress per conversation; repeat (-vv) for every message")
     args = ap.parse_args()
@@ -627,6 +674,7 @@ def main() -> int:
     (out_dir / "chats").mkdir(parents=True, exist_ok=True)
     (out_dir / "assets").mkdir(exist_ok=True)
     (out_dir / "assets" / "style.css").write_text(CSS)
+    (out_dir / "assets" / "takeout.js").write_text(JS, encoding="utf-8")
 
     att_root = data_dir / "attachments.noindex"
     stats = {"exported": 0, "failed": 0}
@@ -658,28 +706,18 @@ def main() -> int:
             remaining -= result.count
         log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
 
+        link = f"chats/{slug}.html"
         (out_dir / "chats" / f"{slug}.html").write_text(
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
-                        content=result.html)
+                        content=result.html, scripts="")
         )
-        summaries.append((convo["title"], f"chats/{slug}.html", result.count,
-                          result.last_ts))
+        summaries.append({"title": convo["title"], "link": link,
+                          "count": result.count, "last": result.last_ts})
 
-    summaries.sort(key=lambda s: s[3] or 0, reverse=True)
-    items = "\n".join(
-        f'<li><a href="{esc(link)}"><span class="convo-name">{esc(title)}</span>'
-        f'<span class="convo-meta">{count} msgs &middot; {esc(fmt_time(last))}</span>'
-        f"</a></li>"
-        for title, link, count, last in summaries
-    )
-    index = (
-        f"<h1>Signal export</h1>"
-        f'<div class="sub">{len(summaries)} conversations &middot; '
-        f"generated {esc(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div>"
-        f'<ul class="convo-list">{items}</ul>'
-    )
     (out_dir / "index.html").write_text(
-        PAGE.format(title="Signal export", css="assets/style.css", content=index)
+        PAGE.format(title="Signal export", css="assets/style.css",
+                    content=render_index(summaries, args.sort),
+                    scripts='<script src="assets/takeout.js"></script>')
     )
 
     conn.close()

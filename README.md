@@ -35,7 +35,13 @@ Useful flags:
 | `--safe-storage-password P` | Keyring secret, when the key is sealed |
 | `--no-attachments` | Text only; much faster |
 | `--limit N` | Stop after N rendered messages across all conversations, for testing |
+| `--sort recent\|name` | Initial index order: last message (default) or name |
 | `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |
+
+## Browsing
+
+The index lists conversations by last message and can be re-sorted by name from
+the page.
 
 ## How it gets in
 
