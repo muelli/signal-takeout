@@ -32,6 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 log = logging.getLogger("signal_takeout")
 
@@ -355,9 +356,11 @@ def load_attachments(conn) -> dict:
     rows = conn.execute(
         """
         SELECT messageId, attachmentType, orderInMessage, size, contentType,
-               path, localKey, fileName, width, height
+               path, localKey, fileName, width, height, caption, flags,
+               screenshotPath, screenshotLocalKey, screenshotSize,
+               screenshotContentType, wasTooBig, pending, error, isCorrupted
         FROM message_attachments
-        WHERE path IS NOT NULL AND editHistoryIndex = -1
+        WHERE attachmentType = 'attachment' AND editHistoryIndex = -1
         ORDER BY messageId, orderInMessage
         """
     )
@@ -445,7 +448,10 @@ a { color:#2c6bed; }
 .reactions { margin-top:.3rem; font-size:.85rem; }
 .att img, .att video { max-width:100%; border-radius:8px; margin-top:.35rem;
   display:block; }
+.att video { max-height:70vh; }
 .att-file { display:inline-block; margin-top:.35rem; font-size:.85rem; }
+.att-size, .att-label { opacity:.7; font-size:.8rem; }
+.caption { margin-top:.35rem; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
 [hidden] { display:none !important; }
 mark { background:#ffd54a; color:#000; border-radius:2px; }
@@ -731,21 +737,58 @@ def apply_mentions(body: str, body_ranges, name_for_aci) -> str:
     return out
 
 
+VOICE_MESSAGE, GIF = 1, 8
+
+
+def human_size(n) -> str:
+    if not isinstance(n, (int, float)) or n <= 0:
+        return ""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def missing_reason(att: dict) -> str:
+    for column, reason in (("wasTooBig", "too large to download"),
+                           ("isCorrupted", "corrupted"),
+                           ("pending", "download pending"),
+                           ("error", "download failed")):
+        if att.get(column):
+            return reason
+    return "not downloaded"
+
+
 def render_attachment(att: dict, rel_dir: str) -> str:
-    if att.get("_exported"):
-        href = f"{rel_dir}/{att['_exported']}"
-        ctype = att.get("contentType") or ""
-        label = esc(att.get("fileName") or att["_exported"])
-        if ctype.startswith("image/"):
-            return f'<div class="att"><a href="{esc(href)}"><img src="{esc(href)}" alt="{label}"></a></div>'
-        if ctype.startswith("video/"):
-            return f'<div class="att"><video controls src="{esc(href)}"></video></div>'
-        if ctype.startswith("audio/"):
-            return f'<div class="att"><audio controls src="{esc(href)}"></audio></div>'
-        return f'<a class="att-file" href="{esc(href)}">📎 {label}</a>'
-    reason = att.get("_error") or "not exported"
-    name = esc(att.get("fileName") or att.get("contentType") or "attachment")
-    return f'<div class="missing">[attachment {name}: {esc(reason)}]</div>'
+    name = att.get("fileName") or ""
+    label = esc(name or att.get("contentType") or "attachment")
+    size = human_size(att.get("size"))
+    caption = f'<div class="caption">{esc(att["caption"])}</div>' if att.get("caption") else ""
+    if not att.get("_exported"):
+        reason = att.get("_error") or "not exported"
+        detail = f" ({size})" if size else ""
+        return f'<div class="missing">[attachment {label}{detail}: {esc(reason)}]</div>' + caption
+
+    href = esc(f"{rel_dir}/{quote(att['_exported'])}")
+    ctype = att.get("contentType") or ""
+    flags = att.get("flags") or 0
+    if ctype.startswith("image/"):
+        media = f'<a href="{href}"><img loading="lazy" src="{href}" alt="{label}"></a>'
+    elif ctype.startswith("video/") and flags & GIF:
+        media = f'<video src="{href}" autoplay loop muted playsinline></video>'
+    elif ctype.startswith("video/"):
+        poster = f' poster="{esc(rel_dir)}/{esc(quote(att["_poster"]))}"' if att.get("_poster") else ""
+        preload = "none" if poster else "metadata"
+        media = f'<video controls preload="{preload}"{poster} src="{href}"></video>'
+    elif ctype.startswith("audio/"):
+        tag = "Voice message" if flags & VOICE_MESSAGE else label
+        media = f'<div class="att-label">{tag}</div><audio controls preload="none" src="{href}"></audio>'
+    else:
+        download = f' download="{esc(name)}"' if name else " download"
+        detail = f' <span class="att-size">({size})</span>' if size else ""
+        return (f'<a class="att-file" href="{href}"{download}>\U0001F4CE {label}{detail}</a>'
+                + caption)
+    return f'<div class="att">{media}</div>' + caption
 
 
 def describe_system(data: dict) -> str | None:
@@ -776,6 +819,9 @@ def describe_system(data: dict) -> str | None:
 
 def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None:
     for att in atts:
+        if not att.get("path"):
+            att["_error"] = missing_reason(att)
+            continue
         src = att_root / att["path"]
         if not src.is_file():
             att["_error"] = "file missing on disk"
@@ -800,6 +846,16 @@ def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None
             continue
         att["_exported"] = dest.name
         stats["exported"] += 1
+        if att.get("screenshotPath"):
+            poster = dest.with_name(dest.stem + ".poster" + (
+                mimetypes.guess_extension(att.get("screenshotContentType") or "") or ".jpg"))
+            try:
+                copy_stored_file(att_root / att["screenshotPath"], {
+                    "localKey": att.get("screenshotLocalKey"),
+                    "size": att.get("screenshotSize")}, poster)
+                att["_poster"] = poster.name
+            except (OSError, ValueError) as exc:
+                log.debug("    poster %s unusable: %s", att["screenshotPath"], exc)
         log.debug("    attachment %s -> %s", att["path"], dest.name)
 
 
@@ -877,9 +933,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         else:
             if body:
                 inner.append(f'<div class="body">{esc(body)}</div>')
-                hits.append((rendered, row["sent_at"] or 0, body))
             for att in atts:
                 inner.append(render_attachment(att, att_rel_dir))
+            searchable = " ".join(t for t in [body] + [a.get("caption") for a in atts] if t)
+            if searchable:
+                hits.append((rendered, row["sent_at"] or 0, searchable))
 
         reactions = data.get("reactions") or []
         if reactions:
