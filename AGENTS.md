@@ -52,6 +52,21 @@ insensitive matching, anchors like `chats/x.html#m2`, find count and next/prev,
 avatar `src` files exist. Remember the export dir must come from a run without
 `--limit`, or the pages will have too few conversations.
 
+The floating date has no layout in jsdom: stub `getBoundingClientRect` on
+`.stickybar` and on each `.day`, dispatch `scroll`, wait about 60 ms.
+No real browser has been used yet, so CSS and sticky positioning are unseen.
+
+To see tqdm bars, stderr must be a real terminal. `podman run -t` plus
+`script` sets `COLUMNS=-1`, which makes tqdm print nothing. Drive the run
+through `pty.openpty()` from Python instead, set a window size with
+`TIOCSWINSZ` and drop `COLUMNS` from the environment.
+
+Streaming decryption is worth re-testing after any change to
+`iter_stored_file`: round trips at sizes 0, 1, 15, 16, 17, 1 MiB minus 1,
+1 MiB and above, with size given, missing, too large and zero-padded, plus a
+flipped byte, a truncated file and a tiny file, which must all raise
+`ValueError` and leave no `.part` file.
+
 ## Design decisions
 
 - `--limit N` is an overall budget of rendered entries across all conversations
@@ -70,6 +85,24 @@ avatar `src` files exist. Remember the export dir must come from a run without
 - Matching normalizes with NFD, strips combining marks and lowercases.
   `normMap` keeps an index map back to the original text so highlights land on
   the right characters.
+- Attachments are loaded with an explicit column list for the five types we
+  render (`attachment`, `long-message`, `quote`, `preview`, `sticker`).
+  `contact` avatar rows are ignored; the shared contact is drawn from the
+  message JSON. `render_conversation` partitions them by type. Quote and
+  preview rows are matched to the JSON lists by `orderInMessage`.
+- `export_attachments` mutates the attachment dicts: `_exported` (file name),
+  `_poster`, `_text` (long message body) or `_error`. Renderers read those.
+  `long-message` is decoded into `_text` and never written as a file.
+- Decryption is streamed (`iter_stored_file`, 1 MiB chunks). `copy_stored_file`
+  writes `name.part` and renames it after the MAC verifies. `read_stored_file`
+  joins the stream and is only for small things (avatars, long messages).
+- Exported names keep Unicode (`safe_name(..., unicode=True)`); conversation
+  slugs stay ASCII. Hrefs are percent-encoded with `att_href`. A conversation's
+  `<slug>_files` folder is deleted before it is exported again.
+- Preview URLs are only linked when they start with http:// or https://.
+- tqdm is optional (`progress()` returns the iterable when it is missing) and
+  uses `disable=None`, so it is off when stderr is not a tty. The main loop
+  runs inside `logging_redirect_tqdm()`.
 - Avatars: `avatar` (contact or group) is preferred over `profileAvatar`, as in
   Signal's own `getAvatar`. Each candidate is tried until one is readable. The
   header HTML lives in `chat_header()` so avatars are exported only for
@@ -87,7 +120,14 @@ avatar `src` files exist. Remember the export dir must come from a run without
   profile pictures, and is ignored.
 - Paths may use backslashes on Windows; the code normalizes them.
 - Message attachments come from the `message_attachments` table (schema 1360+),
-  not the message JSON.
+  not the message JSON. `attachmentType` is one of `attachment`,
+  `long-message`, `quote`, `preview`, `contact`, `sticker`.
+- `messages.body` is truncated for long texts. The full text is a
+  `long-message` attachment with MIME `text/x-signal-plain`, UTF-8.
+- `flags` is a bit set: 1 voice message, 2 borderless, 8 GIF (`SignalService.proto`).
+- Videos have `screenshotPath`/`screenshotLocalKey`/`screenshotSize` for a
+  poster frame. Rows with `path` NULL were never downloaded; `wasTooBig`,
+  `isCorrupted`, `pending` and `error` say why.
 
 Nothing here has been run against a real Signal profile yet, only against the
 fixture. If the user reports a real-data problem, start with `-vv` output.
@@ -101,5 +141,15 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - `--no-attachments` still exports avatars (they are tiny).
 - The whole search index is held in memory and written in one file; a very
   large profile may want sharding.
+- Very long conversations become one huge HTML file. Options discussed but not
+  built: `content-visibility: auto` on messages (cheap, helps layout but not
+  DOM size); chunked `chunks/N.js` files injected with `<script>` (works on
+  file://, unlike fetch) and unloaded again when far from the viewport;
+  paging by month. The search index already carries anchors, so any of them
+  must keep `#mN` links working.
+- The in-conversation find only looks at `.body` text, not captions or link
+  preview titles (global search does include both).
+- Contact avatars on shared contact cards, edit history and story attachments
+  are not rendered.
 - README.md still has several em-dashes from the initial commit.
 - There is no committed test suite; the fixture plus manual runs above are it.
