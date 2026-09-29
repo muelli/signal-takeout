@@ -7,7 +7,7 @@
 
 Reads ~/.var/app/org.signal.Signal/config/Signal (or the native equivalent),
 decrypts db.sqlite with the key Signal stores in config.json, and writes one
-HTML file per conversation plus an index.
+HTML file per conversation plus an index with offline search.
 
 This only ever reads your own local Signal installation. Nothing is uploaded.
 """
@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -356,9 +356,23 @@ a { color:#2c6bed; }
   display:block; }
 .att-file { display:inline-block; margin-top:.35rem; font-size:.85rem; }
 .missing { font-size:.8rem; opacity:.7; font-style:italic; }
+[hidden] { display:none !important; }
+mark { background:#ffd54a; color:#000; border-radius:2px; }
 .tools { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; }
+.tools input { flex:1; min-width:0; padding:.45rem .7rem;
+  border:1px solid var(--line); border-radius:8px; background:var(--card);
+  color:var(--fg); font:inherit; }
 .tools select { padding:.4rem .6rem; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
+.msg { scroll-margin-top:4rem; }
+.msg:target .bubble { outline:2px solid #f5a623; }
+.section { color:var(--muted); font-size:.8rem; text-transform:uppercase;
+  letter-spacing:.04em; margin:1rem 0 .4rem; }
+.convo-list li.hit a { display:block; }
+.hit-head { display:flex; justify-content:space-between; gap:1rem; }
+.snip { color:var(--muted); font-size:.85rem; margin-top:.15rem;
+  overflow-wrap:anywhere; }
+.none { color:var(--muted); font-style:italic; }
 """
 
 PAGE = """<!DOCTYPE html>
@@ -369,20 +383,160 @@ PAGE = """<!DOCTYPE html>
 """
 
 JS = r"""(() => {
-const list = document.getElementById("list");
-const sort = document.getElementById("sort");
-if (!list || !sort) return;
+const $ = (id) => document.getElementById(id);
+const norm = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const tokens = (q) => norm(q).split(/\s+/).filter(Boolean);
 
-function sortList() {
-  const items = [...list.children];
-  items.sort(sort.value === "name"
-    ? (a, b) => a.dataset.name.localeCompare(b.dataset.name, undefined, { sensitivity: "base" })
-    : (a, b) => b.dataset.last - a.dataset.last);
-  list.append(...items);
+function normMap(s) {
+  let n = "";
+  const map = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = norm(s[i]);
+    for (let k = 0; k < c.length; k++) { n += c[k]; map.push(i); }
+  }
+  return { n, map };
 }
 
-sort.addEventListener("change", sortList);
-sortList();
+function ranges(text, toks) {
+  const { n, map } = normMap(text);
+  const found = [];
+  for (const t of toks) {
+    for (let i = n.indexOf(t); i !== -1; i = n.indexOf(t, i + t.length)) {
+      found.push([map[i], map[i + t.length - 1] + 1]);
+    }
+  }
+  found.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of found) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push(r);
+  }
+  return merged;
+}
+
+function highlight(text, rs, from = 0, to = text.length) {
+  const out = document.createDocumentFragment();
+  let pos = from;
+  for (const [a, b] of rs) {
+    const s = Math.max(a, pos), e = Math.min(b, to);
+    if (e <= s) continue;
+    out.append(text.slice(pos, s));
+    const m = document.createElement("mark");
+    m.textContent = text.slice(s, e);
+    out.append(m);
+    pos = e;
+  }
+  out.append(text.slice(pos, to));
+  return out;
+}
+
+function snippet(text, rs) {
+  const from = Math.max(0, rs[0][0] - 40);
+  const to = Math.min(text.length, from + 160);
+  const el = document.createElement("div");
+  el.className = "snip";
+  if (from > 0) el.append("...");
+  el.append(highlight(text, rs, from, to));
+  if (to < text.length) el.append("...");
+  return el;
+}
+
+const pad = (n) => String(n).padStart(2, "0");
+function fmt(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function el(tag, cls, ...kids) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  e.append(...kids);
+  return e;
+}
+
+function initIndex() {
+  const q = $("q");
+  if (!q) return;
+  const list = $("list"), results = $("results"), sort = $("sort");
+  const data = window.SEARCH_INDEX || { convos: [], msgs: [] };
+  let prepared = false;
+
+  function sortList() {
+    const items = [...list.children];
+    items.sort(sort.value === "name"
+      ? (a, b) => a.dataset.name.localeCompare(b.dataset.name, undefined, { sensitivity: "base" })
+      : (a, b) => b.dataset.last - a.dataset.last);
+    list.append(...items);
+  }
+
+  function prepare() {
+    if (prepared) return;
+    prepared = true;
+    for (const c of data.convos) c.n = norm(c.t);
+    for (const m of data.msgs) m.push(norm(m[3]));
+  }
+
+  function nameScore(n, toks) {
+    let score = 0;
+    for (const t of toks) {
+      const i = n.indexOf(t);
+      if (i < 0) return 0;
+      score += i === 0 ? 3 : n[i - 1] === " " ? 2 : 1;
+    }
+    return n === toks.join(" ") ? score + 5 : score;
+  }
+
+  function search() {
+    const toks = tokens(q.value);
+    list.hidden = toks.length > 0;
+    results.hidden = toks.length === 0;
+    if (!toks.length) return;
+    prepare();
+
+    const names = data.convos
+      .map((c) => ({ c, score: nameScore(c.n, toks) }))
+      .filter((h) => h.score > 0)
+      .sort((a, b) => b.score - a.score || b.c.l - a.c.l);
+    const msgs = data.msgs
+      .filter((m) => toks.every((t) => m[4].includes(t)))
+      .sort((a, b) => b[2] - a[2]);
+
+    const out = [];
+    if (names.length) {
+      out.push(el("div", "section", `Conversations (${names.length})`));
+      out.push(el("ul", "convo-list", ...names.map(({ c }) => {
+        const a = el("a", "", el("span", "convo-name", highlight(c.t, ranges(c.t, toks))),
+                     el("span", "convo-meta", fmt(c.l)));
+        a.href = c.u;
+        return el("li", "", a);
+      })));
+    }
+    if (msgs.length) {
+      const shown = msgs.slice(0, 100);
+      const suffix = msgs.length > shown.length ? `, showing ${shown.length}` : "";
+      out.push(el("div", "section", `Messages (${msgs.length}${suffix})`));
+      out.push(el("ul", "convo-list", ...shown.map((m) => {
+        const c = data.convos[m[0]];
+        const a = el("a", "", el("div", "hit-head", el("span", "convo-name", c.t),
+                                 el("span", "convo-meta", fmt(m[2]))),
+                     snippet(m[3], ranges(m[3], toks)));
+        a.href = `${c.u}#m${m[1]}`;
+        return el("li", "hit", a);
+      })));
+    }
+    if (!out.length) out.push(el("div", "none", "No matches."));
+    results.replaceChildren(...out);
+  }
+
+  let timer;
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 120); });
+  sort.addEventListener("change", sortList);
+  sortList();
+  search();
+}
+
+initIndex();
 })();
 """
 
@@ -504,11 +658,13 @@ class Rendered:
     html: str
     count: int
     last_ts: int | None
+    hits: list = field(default_factory=list)
 
 
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                         export_att, budget=None) -> Rendered:
     parts = []
+    hits = []
     rendered = 0
     last_ts = None
     last_day = None
@@ -571,6 +727,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         else:
             if body:
                 inner.append(f'<div class="body">{esc(body)}</div>')
+                hits.append((rendered, row["sent_at"] or 0, body))
             for att in atts:
                 inner.append(render_attachment(att, att_rel_dir))
 
@@ -583,14 +740,15 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
 
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
         css_class = "msg out" if outgoing else "msg"
-        parts.append(f'<div class="{css_class}"><div class="bubble">{"".join(inner)}</div></div>')
+        parts.append(f'<div class="{css_class}" id="m{rendered}">'
+                     f'<div class="bubble">{"".join(inner)}</div></div>')
 
     header = (
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{rendered} entries &middot; '
         f'<a href="../index.html">back to index</a></div>'
     )
-    return Rendered(header + "\n".join(parts), rendered, last_ts)
+    return Rendered(header + "\n".join(parts), rendered, last_ts, hits)
 
 
 def render_index(summaries, sort: str) -> str:
@@ -611,9 +769,11 @@ def render_index(summaries, sort: str) -> str:
         f"<h1>Signal export</h1>"
         f'<div class="sub">{len(summaries)} conversations &middot; '
         f"generated {esc(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div>"
-        '<div class="tools">'
+        '<div class="tools"><input id="q" type="search" autocomplete="off" '
+        'placeholder="Search names and messages">'
         f'<label>Sort <select id="sort">{options}</select></label></div>'
         f'<ul class="convo-list" id="list">{items}</ul>'
+        '<div id="results" hidden></div>'
     )
 
 
@@ -680,7 +840,7 @@ def main() -> int:
     stats = {"exported": 0, "failed": 0}
     skipped_empty = 0
     remaining = args.limit
-    summaries = []
+    summaries, search_msgs = [], []
 
     for pos, convo in enumerate(convos.values(), 1):
         if remaining is not None and remaining <= 0:
@@ -711,13 +871,24 @@ def main() -> int:
             PAGE.format(title=esc(convo["title"]), css="../assets/style.css",
                         content=result.html, scripts="")
         )
+        search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
         summaries.append({"title": convo["title"], "link": link,
                           "count": result.count, "last": result.last_ts})
 
+    search_index = {
+        "convos": [{"t": s["title"], "u": s["link"], "l": s["last"] or 0} for s in summaries],
+        "msgs": search_msgs,
+    }
+    (out_dir / "assets" / "search-index.js").write_text(
+        "window.SEARCH_INDEX=" + json.dumps(search_index, ensure_ascii=False,
+                                            separators=(",", ":")) + ";",
+        encoding="utf-8",
+    )
     (out_dir / "index.html").write_text(
         PAGE.format(title="Signal export", css="assets/style.css",
                     content=render_index(summaries, args.sort),
-                    scripts='<script src="assets/takeout.js"></script>')
+                    scripts='<script src="assets/search-index.js" charset="utf-8"></script>'
+                            '<script src="assets/takeout.js"></script>')
     )
 
     conn.close()

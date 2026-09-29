@@ -108,6 +108,8 @@ def main() -> None:
          {"bodyRanges": [{"start": 0, "length": 1, "mentionAci": ALICE}]}),
         ("m8", "conv-group", "outgoing", None, now - 3600_000, "Sounds good to me", {}),
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
+        ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
+        ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),
     ]
     for mid, cid, mtype, src, sent, body, extra in rows:
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
