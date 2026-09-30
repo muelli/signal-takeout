@@ -470,12 +470,13 @@ a { color:#2c6bed; }
 .msg.out { justify-content:flex-end; }
 .bubble { max-width:78%; padding:.5rem .75rem; border-radius:14px;
   background:var(--in); position:relative; }
-.copy { display:none; position:absolute; top:50%; left:100%; transform:translateY(-50%);
+.copy { opacity:0; visibility:hidden; transition:opacity .3s .5s, visibility 0s .8s;
+  position:absolute; top:50%; left:100%; transform:translateY(-50%);
   padding:.15rem .5rem; border:1px solid var(--line); border-radius:8px;
   background:var(--card); color:var(--muted); font:inherit; font-size:.75rem;
   cursor:pointer; white-space:nowrap; }
 .msg.out .copy { left:auto; right:100%; }
-.bubble:hover .copy, .copy:focus-visible { display:block; }
+.bubble:hover .copy, .copy:focus-visible { opacity:1; visibility:visible; transition:opacity .1s; }
 .msg.out .bubble { background:var(--out); color:var(--out-fg); }
 .author { font-size:.75rem; font-weight:600; opacity:.75;
   margin-bottom:.15rem; }
