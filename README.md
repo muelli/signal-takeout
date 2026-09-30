@@ -145,3 +145,7 @@ message, previews and more, all in one conversation called Carol):
 uv run make_fixture.py /tmp/fake-signal
 uv run signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export -v
 ```
+
+## License
+
+AGPL-3.0-or-later, REUSE compliant. See `LICENSES/`.

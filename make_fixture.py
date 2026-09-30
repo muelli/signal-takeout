@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --script
+# SPDX-FileCopyrightText: 2026 Tobias Mueller <muelli@cryptobitch.de>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # /// script
 # requires-python = ">=3.9"
 # dependencies = ["sqlcipher3-binary", "cryptography"]
