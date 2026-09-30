@@ -108,6 +108,8 @@ flipped byte, a truncated file and a tiny file, which must all raise
   entry `n` from its `data-first`/`data-last`. `#mN` navigation, the month
   select and find all go through `reveal`. Entry numbers are per conversation
   and shared with the global search index anchors.
+- `initKeys` binds Ctrl+F and `/` to the find box and Escape to the back link
+  (`#back`); Escape first clears a non-empty search.
 - In-page find uses a lazily loaded `<month dir>/find.js` (`window.__find`,
   `[[n, text]]`), so it sees all months; loaded chunks get marks through
   `chat.onLoad`. The global index still keeps all text of all conversations in

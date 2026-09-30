@@ -53,6 +53,9 @@ previous and next buttons (Enter and Shift+Enter work too). Matching ignores
 case and accents. While you scroll a conversation, the current date floats
 below its search box.
 
+In a conversation, Ctrl+F (or `/`) jumps to its search box and Escape clears
+the search, then goes back to the index.
+
 Long conversations are split into one file per month (or per 2000 entries in
 a busy month) under `chats/<name>_months/`. The page loads a month when you
 scroll near it and drops it again when you are far away, so the browser never

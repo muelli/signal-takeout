@@ -807,10 +807,33 @@ function initFind(chat) {
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); show(cur + (e.shiftKey ? -1 : 1)); }
-    else if (e.key === "Escape") { input.value = ""; loadData().then(run); }
+    else if (e.key === "Escape" && input.value) {
+      e.preventDefault();
+      input.value = "";
+      loadData().then(run);
+    }
   });
   $("find-next").addEventListener("click", () => show(cur + 1));
   $("find-prev").addEventListener("click", () => show(cur - 1));
+}
+
+function initKeys() {
+  const back = $("back"), input = $("find");
+  if (!back || !input) return;
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.altKey) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    } else if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      input.focus();
+    } else if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      location.href = back.href;
+    }
+  });
 }
 
 function initCopy() {
@@ -989,6 +1012,7 @@ reportErrors();
 initIndex();
 const chat = initChat();
 if (chat) initFind(chat);
+initKeys();
 initCopy();
 })();
 """
@@ -1394,7 +1418,7 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
         f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{count} entries &middot; '
-        f'<a href="../index.html">back to index</a></div></div></div>'
+        f'<a id="back" href="../index.html">back to index</a></div></div></div>'
         '<div class="findbar">'
         '<input id="find" type="search" autocomplete="off" '
         'placeholder="Search this conversation">'
