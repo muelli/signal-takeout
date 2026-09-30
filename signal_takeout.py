@@ -954,6 +954,18 @@ function initChat() {
     });
   }
 
+  const MEDIA_ERRORS = ["", "aborted", "network error", "decode error", "format not supported"];
+  timeline.addEventListener("error", (e) => {
+    const m = e.target;
+    if (!(m instanceof HTMLMediaElement) || m._noted) return;
+    m._noted = true;
+    const a = el("a", "", "open the file");
+    a.href = m.getAttribute("src");
+    const why = MEDIA_ERRORS[m.error ? m.error.code : 0] || "unknown error";
+    m.after(el("div", "missing", `This browser could not play it (${why}); `, a,
+               " to use another player."));
+  }, true);
+
   addEventListener("scroll", schedule, { passive: true });
   addEventListener("resize", schedule);
   addEventListener("hashchange", () => goto(location.hash));
