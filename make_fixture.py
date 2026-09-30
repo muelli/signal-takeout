@@ -133,7 +133,10 @@ def main() -> None:
     long_text = "Long message start. " + "lorem ipsum dolor sit amet " * 200 + "needle-in-the-long-text"
     rows = [
         # id, conv, type, sourceServiceId, sent_at, body, extra json
-        ("m1", "conv-alice", "incoming", ALICE, now - 2 * day, "Hey, are we still on for Friday?", {}),
+        ("m1", "conv-alice", "incoming", ALICE, now - 2 * day, "Hey, are we still on for Friday?",
+         {"reactions": [{"emoji": "\U0001F44D", "fromId": ME, "timestamp": now},
+                        {"emoji": "\U0001F44D", "fromId": BOB, "timestamp": now},
+                        {"emoji": "\u2764\ufe0f", "fromId": ME, "timestamp": now}]}),
         ("m2", "conv-alice", "outgoing", None, now - 2 * day + 60000, "Yes! Looking forward to it.",
          {"reactions": [{"emoji": "👍", "fromId": ALICE, "timestamp": now}]}),
         ("m3", "conv-alice", "incoming", ALICE, now - day, "Here's the map",

@@ -486,7 +486,11 @@ a { color:#2c6bed; }
 .deleted { font-style:italic; opacity:.7; }
 .quote { border-left:3px solid currentColor; opacity:.75; padding-left:.5rem;
   margin-bottom:.35rem; font-size:.85rem; }
-.reactions { margin-top:.3rem; font-size:.85rem; }
+.reactions { display:flex; flex-wrap:wrap; gap:.25rem; margin-top:.3rem; }
+.reaction { display:inline-flex; align-items:center; gap:.25rem; padding:0 .5rem;
+  border-radius:999px; font-size:.85rem; line-height:1.5;
+  background:rgba(127,127,127,.18); border:1px solid rgba(127,127,127,.35); }
+.rcount { font-size:.75rem; opacity:.8; }
 .att img, .att video { max-width:100%; border-radius:8px; margin-top:.35rem;
   display:block; }
 .att video { max-height:70vh; }
@@ -1356,10 +1360,14 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
 
         reactions = data.get("reactions") or []
         if reactions:
-            shown = " ".join(
-                f'{esc(r.get("emoji"))}' for r in reactions if isinstance(r, dict)
-            )
-            inner.append(f'<div class="reactions">{shown}</div>')
+            tally = Counter(r["emoji"] for r in reactions
+                            if isinstance(r, dict) and r.get("emoji"))
+            pills = "".join(
+                f'<span class="reaction">{esc(emoji)}'
+                + (f'<span class="rcount">{n}</span>' if n > 1 else "") + "</span>"
+                for emoji, n in tally.items())
+            if pills:
+                inner.append(f'<div class="reactions">{pills}</div>')
 
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
         css_class = "msg out" if outgoing else "msg"
