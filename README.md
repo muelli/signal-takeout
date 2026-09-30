@@ -15,6 +15,14 @@ uv run signal_takeout.py -o ~/signal-export
 xdg-open ~/signal-export/index.html
 ```
 
+Or straight from GitHub, without cloning (pin a tag or commit instead of
+`master` if you want to know exactly what runs; the script reads your Signal
+key, so read it first):
+
+```sh
+uv run https://raw.githubusercontent.com/muelli/signal-takeout/master/signal_takeout.py -o ~/signal-export
+```
+
 Without uv:
 
 ```sh
