@@ -1480,7 +1480,7 @@ def render_index(summaries, sort: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap = argparse.ArgumentParser(prog="signal_takeout.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", help="Signal data directory (auto-detected by default)")
     ap.add_argument("-o", "--out", default="signal-export", help="output directory")
