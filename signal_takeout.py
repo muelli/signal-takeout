@@ -567,7 +567,7 @@ mark { background:#ffd54a; color:#000; border-radius:2px; }
 .find-count { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .msg { scroll-margin-top:7rem; }
 .msg.cur .bubble, .msg.jump .bubble { outline:2px solid #f5a623; }
-#timeline { overflow-anchor:none; }
+#timeline { overflow-anchor:none; padding-top:1.5rem; }
 .chunk { display:flow-root; scroll-margin-top:7rem; }
 .chunk-label { text-align:center; color:var(--muted); font-size:.85rem;
   padding:1rem 0; font-style:italic; }
