@@ -72,7 +72,7 @@ async function type(w, d, value) {
   const i = d.getElementById("find");
   i.value = value;
   i.dispatchEvent(new w.Event("input"));
-  await sleep(450);
+  await sleep(700);
   return d.getElementById("find-count").textContent;
 }
 
