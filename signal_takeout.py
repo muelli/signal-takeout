@@ -493,6 +493,10 @@ a { color:#2c6bed; }
 .deleted { font-style:italic; opacity:.7; }
 .quote { border-left:3px solid currentColor; opacity:.75; padding-left:.5rem;
   margin-bottom:.35rem; font-size:.85rem; }
+.edits { margin-top:.3rem; font-size:.8rem; opacity:.8; }
+.edits summary { cursor:pointer; }
+.edit { margin-top:.2rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.edit .time { display:inline; margin:0; }
 .reactions { display:flex; flex-wrap:wrap; gap:.25rem; margin-top:.3rem; }
 .reaction { display:inline-flex; align-items:center; gap:.25rem; padding:0 .5rem;
   border-radius:999px; font-size:.85rem; line-height:1.5;
@@ -1414,6 +1418,15 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                 for emoji, n in tally.items())
             if pills:
                 inner.append(f'<div class="reactions">{pills}</div>')
+
+        edits = [e for e in data.get("editHistory") or [] if isinstance(e, dict)][1:]
+        if edits and not data.get("deletedForEveryone"):
+            versions = "".join(
+                f'<div class="edit"><span class="time">{esc(fmt_time(e.get("timestamp")))}</span> '
+                f'{esc(apply_mentions(e.get("body") or "", e.get("bodyRanges"), name_for_aci))}</div>'
+                for e in reversed(edits))
+            inner.append(f'<details class="edits"><summary>Edited ({len(edits)} earlier '
+                         f'{"version" if len(edits) == 1 else "versions"})</summary>{versions}</details>')
 
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
         css_class = "msg out" if outgoing else "msg"

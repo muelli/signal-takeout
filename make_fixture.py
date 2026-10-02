@@ -156,6 +156,10 @@ def main() -> None:
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
         ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),
+        ("m30", "conv-alice", "outgoing", None, now - 1500_000, "Friday at 8 works",
+         {"editHistory": [{"body": "Friday at 8 works", "timestamp": now - 1500_000},
+                          {"body": "Friday at 7 works", "timestamp": now - 1560_000},
+                          {"body": "Frday at 7 works", "timestamp": now - 1600_000}]}),
         ("m12", "conv-toby", "incoming", TOBY, now - 900_000, "Lunch tomorrow?", {}),
         # Carol's conversation exercises every attachment kind; added in time order.
         ("m13", "conv-carol", "incoming", CAROL, t0, "Look at this", {}),

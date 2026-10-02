@@ -123,8 +123,8 @@ delete-for-everyone tombstones. Contact and group pictures show next to names
 in the index, in search results and on each conversation page; conversations
 without a picture get a letter placeholder. In groups, each incoming message
 shows the sender's picture and a name in a colour that stays the same per person. Group updates, timer changes and
-calls become one-line system entries. Edit history is not rendered; only the
-current version of an edited message.
+calls become one-line system entries. An edited message shows its current
+text and an expandable list of the earlier versions.
 
 ### Attachments
 

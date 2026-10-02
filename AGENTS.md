@@ -170,5 +170,6 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - Attachment failures are logged as warnings with reason, file and message id,
   and summarized at the end. `file missing on disk` (Signal purged the file) is
   the likely common one; `MAC mismatch` means corrupt data or a wrong key.
-- Contact avatars on shared contact cards, edit history and story attachments
-  are not rendered.
+- Contact avatars on shared contact cards and story attachments are not
+  rendered. Edit history is read from `editHistory` in the message JSON (newest
+  first, entry 0 is the current text); old versions are not searchable.

@@ -131,3 +131,10 @@ def test_group_senders_have_avatar_color_and_reactions_name_people(export):
     assert '<img class=\\"avatar\\" src=\\"../assets/avatars/Alice' in group
     alice = next(chats.glob("Alice*_months/*.js")).read_text()
     assert 'title=\\"Bob, Toby\\"' in alice
+
+
+def test_edit_history_lists_earlier_versions_oldest_first(export):
+    out, _ = export
+    text = next(out.glob("chats/Alice*_months/2026-09.js")).read_text()
+    assert "Edited (2 earlier versions)" in text
+    assert text.index("Frday at 7 works") < text.index("Friday at 7 works")
