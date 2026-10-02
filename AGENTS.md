@@ -75,6 +75,9 @@ through `pty.openpty()` from Python instead, set a window size with
   each conversation loads rows at or after it. Rows with nothing to render
   make the rendered count a little lower. Attachments are decrypted only for
   messages that are rendered.
+- `--since`/`--until` build a `Window` (sent_at range plus the `--limit` received_at
+  cutoff) that `count_messages`, `load_messages` and `newest_cutoff` share, so
+  `--limit` counts only messages inside the range.
 - `--export-only NAME` filters before `--limit`. It matches casefolded
   substrings against every name field (`conversation_names`): group name,
   system given/family/full, profile given/family/full. `aci_to_name` is built

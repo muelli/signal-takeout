@@ -44,6 +44,7 @@ Useful flags:
 | `--no-attachments` | Text only; much faster (profile pictures are still exported, long messages stay cut off) |
 | `--export-only NAME` | Only conversations with NAME in a contact or group name, case insensitive (profile names count too) |
 | `--limit N` | Only the N newest messages across all conversations, for testing |
+| `--since DATE`, `--until DATE` | Only messages sent from or up to a day (`YYYY-MM-DD`, local time, both inclusive); combines with `--limit` |
 | `--sort recent\|name` | Initial index order: last message (default) or name |
 | `-v`, `--verbose` | Log each conversation as it renders; `-vv` logs every message |
 

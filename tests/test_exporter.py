@@ -138,3 +138,32 @@ def test_edit_history_lists_earlier_versions_oldest_first(export):
     text = next(out.glob("chats/Alice*_months/2026-09.js")).read_text()
     assert "Edited (2 earlier versions)" in text
     assert text.index("Frday at 7 works") < text.index("Friday at 7 works")
+
+
+def run_export(tmp_path, *extra):
+    run = lambda *a: subprocess.run([sys.executable, *map(str, a)], check=True,
+                                    capture_output=True, text=True)
+    run(ROOT / "make_fixture.py", tmp_path / "fake")
+    res = run(ROOT / "signal_takeout.py", "--data-dir", tmp_path / "fake", "-o", tmp_path / "out",
+              "--no-attachments", *extra)
+    return tmp_path / "out", res
+
+
+def test_since_and_until_select_whole_days(tmp_path):
+    out, _ = run_export(tmp_path, "--export-only", "Dave", "--since", "2026-07-01",
+                        "--until", "2026-07-31")
+    months = [f.stem for f in out.glob("chats/Dave*_months/2026-*.js")]
+    assert months == ["2026-07"]
+
+
+def test_limit_applies_inside_the_range(tmp_path):
+    out, _ = run_export(tmp_path, "--export-only", "Dave", "--until", "2026-07-31", "--limit", "3")
+    text = "".join(f.read_text() for f in out.glob("chats/Dave*_months/2026-*.js"))
+    assert text.count("Dave message") == 3
+    assert [f.stem for f in out.glob("chats/Dave*_months/2026-*.js")] == ["2026-07"]
+
+
+def test_bad_date_is_rejected(tmp_path):
+    res = subprocess.run([sys.executable, str(ROOT / "signal_takeout.py"), "--since", "yesterday"],
+                         capture_output=True, text=True)
+    assert res.returncode == 2 and "not a date" in res.stderr

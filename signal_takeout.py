@@ -34,8 +34,8 @@ import sys
 import time
 import zlib
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -401,12 +401,40 @@ def load_our_aci(conn) -> str | None:
     return value.split(".")[0] if isinstance(value, str) else None
 
 
-def newest_cutoff(conn, conversation_ids, limit: int) -> int | None:
+def parse_day(text: str) -> datetime:
+    try:
+        return datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a date like 2026-03-31")
+
+
+@dataclass(frozen=True)
+class Window:
+    """Which messages to read: sent_at from start (inclusive) to end (exclusive),
+    and received_at from cutoff on."""
+    start: int = 0
+    end: int | None = None
+    cutoff: int | None = None
+
+    def sql(self) -> tuple[str, list]:
+        clause = "received_at >= ?"
+        params = [self.cutoff or 0]
+        if self.start:
+            clause += " AND sent_at >= ?"
+            params.append(self.start)
+        if self.end is not None:
+            clause += " AND sent_at < ?"
+            params.append(self.end)
+        return clause, params
+
+
+def newest_cutoff(conn, conversation_ids, limit: int, window: Window = Window()) -> int | None:
     """received_at of the limit-th newest message in these conversations, if there are that many."""
     wanted = set(conversation_ids)
+    clause, params = window.sql()
     seen = 0
-    for row in conn.execute("SELECT conversationId, received_at FROM messages"
-                            " ORDER BY received_at DESC"):
+    for row in conn.execute(f"SELECT conversationId, received_at FROM messages WHERE {clause}"
+                            " ORDER BY received_at DESC", params):
         if row["conversationId"] in wanted:
             seen += 1
             if seen >= limit:
@@ -414,21 +442,22 @@ def newest_cutoff(conn, conversation_ids, limit: int) -> int | None:
     return None
 
 
-def count_messages(conn, conversation_id: str, since: int | None = None) -> int:
-    return conn.execute("SELECT count(*) FROM messages WHERE conversationId = ?"
-                        " AND received_at >= ?",
-                        (conversation_id, since or 0)).fetchone()[0]
+def count_messages(conn, conversation_id: str, window: Window = Window()) -> int:
+    clause, params = window.sql()
+    return conn.execute(f"SELECT count(*) FROM messages WHERE conversationId = ? AND {clause}",
+                        [conversation_id, *params]).fetchone()[0]
 
 
-def load_messages(conn, conversation_id: str, since: int | None = None):
+def load_messages(conn, conversation_id: str, window: Window = Window()):
+    clause, params = window.sql()
     return conn.execute(
-        """
+        f"""
         SELECT id, json, body, type, sent_at, received_at, sourceServiceId, isErased
         FROM messages
-        WHERE conversationId = ? AND received_at >= ?
+        WHERE conversationId = ? AND {clause}
         ORDER BY received_at ASC, sent_at ASC
         """,
-        (conversation_id, since or 0),
+        [conversation_id, *params],
     )
 
 
@@ -1526,6 +1555,10 @@ def main() -> int:
                          "group name (case insensitive)")
     ap.add_argument("--limit", type=int,
                     help="only the N newest messages across all conversations (for testing)")
+    ap.add_argument("--since", type=parse_day, metavar="YYYY-MM-DD",
+                    help="only messages sent on or after this day (local time)")
+    ap.add_argument("--until", type=parse_day, metavar="YYYY-MM-DD",
+                    help="only messages sent on or before this day (local time)")
     ap.add_argument("--sort", choices=("recent", "name"), default="recent",
                     help="initial order of the index: last message or name (default: recent)")
     ap.add_argument("-v", "--verbose", action="count", default=0,
@@ -1604,7 +1637,14 @@ def main() -> int:
 
     stats = {"exported": 0, "failed": 0, "reasons": Counter()}
     skipped_empty = 0
-    cutoff = newest_cutoff(conn, convos, args.limit) if args.limit else None
+    window = Window(
+        start=int(args.since.timestamp() * 1000) if args.since else 0,
+        end=int((args.until + timedelta(days=1)).timestamp() * 1000) if args.until else None,
+    )
+    if args.limit:
+        window = replace(window, cutoff=newest_cutoff(conn, convos, args.limit, window))
+    cutoff = window.cutoff
+    filtered = bool(args.since or args.until or args.limit)
     summaries, search_msgs = [], []
 
     chats = progress(convos.values(), desc="Conversations", unit="chat", position=0)
@@ -1612,8 +1652,8 @@ def main() -> int:
         for pos, convo in enumerate(chats, 1):
             if tqdm is not None:
                 chats.set_postfix(files=stats["exported"], refresh=False)
-            if cutoff is not None and not count_messages(conn, convo["id"], cutoff):
-                log.info("[%d/%d] %s: nothing newer than the --limit cutoff",
+            if filtered and not count_messages(conn, convo["id"], window):
+                log.info("[%d/%d] %s: no messages in the selected range",
                          pos, len(convos), convo["title"])
                 continue
 
@@ -1634,8 +1674,8 @@ def main() -> int:
 
             result = render_conversation(
                 convo,
-                progress(load_messages(conn, convo["id"], cutoff),
-                         total=count_messages(conn, convo["id"], cutoff),
+                progress(load_messages(conn, convo["id"], window),
+                         total=count_messages(conn, convo["id"], window),
                          desc=convo["title"][:30], unit="msg", leave=False, position=1),
                 attachments, name_for_aci,
                 f"{slug}_files",
@@ -1694,6 +1734,9 @@ def main() -> int:
         print(f"Skipped {skipped_empty} conversations with no messages.")
     if cutoff is not None:
         print(f"--limit {args.limit}: exported only the newest messages.")
+    if args.since or args.until:
+        print(f"Date range: {args.since:%Y-%m-%d}" if args.since else "Date range: start",
+              f"to {args.until:%Y-%m-%d}" if args.until else "to now")
     if not args.no_attachments:
         print(f"Attachments: {stats['exported']} exported, {stats['failed']} failed.")
         for reason, n in stats["reasons"].most_common():
