@@ -154,6 +154,11 @@ uv run make_fixture.py /tmp/fake-signal
 uv run signal_takeout.py --data-dir /tmp/fake-signal -o /tmp/sig-export -v
 ```
 
+## Tests
+
+`tests/run.sh` builds the fixture and runs the Python and browser tests in
+throwaway podman containers. CI runs the same on GitHub.
+
 ## License
 
 AGPL-3.0-or-later, REUSE compliant. See `LICENSES/`.

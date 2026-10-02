@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: 2026 Tobias Mueller <muelli@cryptobitch.de>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+import base64
+import hashlib
+import hmac
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import signal_takeout as st  # noqa: E402
+
+MIB = 1 << 20
+
+
+def encrypt(plain: bytes, zeros: int = 0):
+    keys = secrets.token_bytes(64)
+    iv = secrets.token_bytes(16)
+    padder = padding.PKCS7(128).padder()
+    enc = Cipher(algorithms.AES(keys[:32]), modes.CBC(iv)).encryptor()
+    body = iv + enc.update(padder.update(plain + b"\0" * zeros) + padder.finalize()) + enc.finalize()
+    mac = hmac.new(keys[32:], body, hashlib.sha256).digest()
+    return body + mac, base64.b64encode(keys).decode()
+
+
+@pytest.mark.parametrize("n", [0, 1, 15, 16, 17, 31, 32, MIB - 1, MIB, MIB + 5])
+@pytest.mark.parametrize("zeros", [0, 40])
+def test_stored_file_round_trip(tmp_path, n, zeros):
+    data = secrets.token_bytes(n)
+    blob, key = encrypt(data, zeros)
+    f = tmp_path / "f"
+    f.write_bytes(blob)
+    assert st.read_stored_file(f, {"localKey": key, "size": n}) == data
+    if not zeros:
+        assert st.read_stored_file(f, {"localKey": key}) == data
+        assert st.read_stored_file(f, {"localKey": key, "size": n + 999}) == data
+
+
+def test_legacy_plain_file(tmp_path):
+    f = tmp_path / "plain"
+    f.write_bytes(b"legacy")
+    assert st.read_stored_file(f, {}) == b"legacy"
+
+
+@pytest.mark.parametrize("damage", ["flip", "truncate", "tiny"])
+def test_corrupt_file_is_rejected_cleanly(tmp_path, damage):
+    blob, key = encrypt(secrets.token_bytes(5000))
+    bad = {
+        "flip": blob[:100] + bytes([blob[100] ^ 1]) + blob[101:],
+        "truncate": blob[:-40],
+        "tiny": blob[:20],
+    }[damage]
+    src, dest = tmp_path / "bad", tmp_path / "dest"
+    src.write_bytes(bad)
+    with pytest.raises(ValueError):
+        st.copy_stored_file(src, {"localKey": key, "size": 5000}, dest)
+    assert not dest.exists() and not list(tmp_path.glob("*.part"))
+
+
+def test_oscrypt_round_trip():
+    import hashlib as h
+    key = h.pbkdf2_hmac("sha1", b"hunter2", b"saltysalt", 1, 16)
+    padder = padding.PKCS7(128).padder()
+    enc = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
+    blob = b"v11" + enc.update(padder.update(b"ab" * 32) + padder.finalize()) + enc.finalize()
+    assert st.oscrypt_decrypt(blob, b"hunter2") == "ab" * 32
+    with pytest.raises(ValueError):
+        st.oscrypt_decrypt(blob, b"wrong")
+
+
+def test_chunker_splits_by_month_and_cap(monkeypatch):
+    monkeypatch.setattr(st, "CHUNK_CAP", 5)
+    out = []
+    c = st.Chunker(lambda meta, html: out.append(dict(meta)))
+    day, base, n = 86400000, 1_750_000_000_000, 0
+    for d in range(12):
+        for k in range(3):
+            n += 1
+            c.add(base + d * day + k * 1000, f"<m{n}>", n)
+    c.close(n)
+    assert sum(m["count"] for m in out) == n
+    assert all(m["last"] - m["first"] + 1 == m["count"] for m in out)
+    assert len({m["id"] for m in out}) == len(out)
+
+
+@pytest.fixture(scope="module")
+def export(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("export")
+    run = lambda *a: subprocess.run([sys.executable, *map(str, a)], check=True,
+                                    capture_output=True, text=True)
+    run(ROOT / "make_fixture.py", tmp / "fake")
+    res = run(ROOT / "signal_takeout.py", "--data-dir", tmp / "fake", "-o", tmp / "out")
+    return tmp / "out", res
+
+
+def test_export_layout(export):
+    out, res = export
+    assert "0 failed" in res.stdout
+    assert (out / "index.html").is_file()
+    assert (out / "assets" / "takeout.js").is_file()
+    assert (out / "assets" / "search-index.js").is_file()
+    pages = list((out / "chats").glob("*.html"))
+    assert len(pages) >= 4
+    dave = next(p for p in pages if p.name.startswith("Dave"))
+    months = sorted(f.stem for f in (out / "chats" / (dave.stem + "_months")).glob("2026-*.js"))
+    assert months == ["2026-05", "2026-06", "2026-07", "2026-08"]
+
+
+def test_limit_keeps_the_newest(tmp_path):
+    run = lambda *a: subprocess.run([sys.executable, *map(str, a)], check=True,
+                                    capture_output=True, text=True)
+    run(ROOT / "make_fixture.py", tmp_path / "fake")
+    run(ROOT / "signal_takeout.py", "--data-dir", tmp_path / "fake", "-o", tmp_path / "out",
+        "--export-only", "Dave", "--limit", "5", "--no-attachments")
+    text = "".join(f.read_text() for f in (tmp_path / "out" / "chats").rglob("*.js"))
+    text += "".join(f.read_text() for f in (tmp_path / "out" / "chats").glob("*.html"))
+    assert "Dave message 59" in text and "Dave message 54" not in text

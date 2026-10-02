@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Tobias Mueller <muelli@cryptobitch.de>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: tests
+on: [push, pull_request]
+env:
+  TZ: UTC
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build the fixture and export it
+        run: |
+          uv run make_fixture.py /tmp/fake
+          uv run signal_takeout.py --data-dir /tmp/fake -o /tmp/export
+      - name: Python tests
+        run: uv run --with pytest --with sqlcipher3-binary --with cryptography --with tqdm pytest -q tests
+      - name: Browser JS tests
+        working-directory: tests/js
+        run: |
+          npm install --no-audit --no-fund
+          EXPORT_DIR=/tmp/export node --test
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fsfe/reuse-action@v5

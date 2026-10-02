@@ -37,33 +37,21 @@ The scripts carry PEP 723 headers, so `uv run` resolves dependencies itself.
 Images already cached locally: `docker.io/library/python:3.12-slim` and
 `docker.io/library/node:24.21.0-slim`.
 
-Exporter against the fixture:
+Run everything with `tests/run.sh` (podman, throwaway containers): it builds
+the fixture, exports it, runs pytest (`tests/test_exporter.py`: stored-file
+round trips, corrupt files, os_crypt, `Chunker`, export layout, `--limit`) and
+the jsdom tests in `tests/js` (`node --test`, reading the export from
+`EXPORT_DIR`). CI (`.github/workflows/tests.yml`) does the same plus
+`reuse lint`. The fixture uses a fixed "now" (2026-09-30 12:00 UTC) so month
+chunks and counts are stable; keep it that way, and keep `TZ=UTC`.
 
-```sh
-podman run --rm -v "$PWD":/work:ro -v /tmp/out:/out -w /tmp docker.io/library/python:3.12-slim sh -c 'pip install -q uv && uv run /work/make_fixture.py /out/fake && uv run /work/signal_takeout.py --data-dir /out/fake -o /out/export -vv'
-```
+jsdom has no layout, so `tests/js/helpers.js` fakes it (`layout: true`):
+sections stacked, children 60 px apart, `scrollIntoView` and
+`getBoundingClientRect` stubbed. Wait about 300 to 450 ms after events (find is
+debounced and chunks load through script tags). `window.navigation` errors are
+caught through the `VirtualConsole` (used for Escape).
 
-The fixture has Dave, a conversation over four months, for the chunk tests.
-The browser JS has no committed tests. To check it, install `jsdom` inside the
-node image, load `export/index.html` with `JSDOM.fromFile(..., { runScripts:
-"dangerously", resources: "usable" })`, wait for `load`, stub
-`Element.prototype.scrollIntoView` (jsdom lacks it), set an input's `value`,
-dispatch an `input` event and wait about 200 ms (search is debounced 120 ms).
-Things worth asserting: sort order, name hits before message hits, accent
-insensitive matching, anchors like `chats/x.html#m2`, find count and next/prev,
-avatar `src` files exist. Remember the export dir must come from a run without
-`--limit`, or the pages will have too few conversations.
-
-jsdom has no layout, so chunk tests fake it: give `.stickybar`, `.chunk`,
-`.day` and `.msg` a `getBoundingClientRect` computed from a virtual scrollY
-(sections stacked, loaded ones taller than placeholders), stub `scrollIntoView`
-to set that scrollY, set `innerHeight`, and open pages with `#mN` in the `url`
-option to test goto. Assert which `.chunk` elements are loaded (`_loaded`)
-after scrolling, that `#mN` gets the `jump` class, and find counts
-("1 / 60", prev wraps to the newest). Wait about 300 to 450 ms after events
-(find is debounced and chunks load through script tags).
-`Chunker` can be unit tested by importing the module with a small `CHUNK_CAP`.
-Real browsers work in containers too (debian:stable-slim, apt inside the
+Real browsers also work in containers (debian:stable-slim, apt inside the
 container): `chromium --headless --no-sandbox --virtual-time-budget=6000
 --dump-dom file:///...#m50` for a quick DOM check, and WebKitGTK or Epiphany
 through `WebKitWebDriver` under `xvfb-run` (Epiphany: browserName Epiphany,
@@ -71,18 +59,14 @@ binary /usr/bin/epiphany, arg --automation-mode, under `dbus-run-session`;
 drive inputs with `execute_script`, since `send_keys` fails there). The user
 reads exports in Epiphany. Chunk loading, click-through from index search and
 `#mN` were verified this way on a 30000 message conversation. Screenshots and
-visual layout are still unchecked.
+visual layout are still unchecked. Videos play in WebKitGTK with libav in a
+container, so "format not supported" in the user's Epiphany is probably a
+sandboxed (Flatpak or snap) codec issue, not an export problem (unconfirmed).
 
 To see tqdm bars, stderr must be a real terminal. `podman run -t` plus
 `script` sets `COLUMNS=-1`, which makes tqdm print nothing. Drive the run
 through `pty.openpty()` from Python instead, set a window size with
 `TIOCSWINSZ` and drop `COLUMNS` from the environment.
-
-Streaming decryption is worth re-testing after any change to
-`iter_stored_file`: round trips at sizes 0, 1, 15, 16, 17, 1 MiB minus 1,
-1 MiB and above, with size given, missing, too large and zero-padded, plus a
-flipped byte, a truncated file and a tiny file, which must all raise
-`ValueError` and leave no `.part` file.
 
 ## Design decisions
 
@@ -189,4 +173,3 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
   the likely common one; `MAC mismatch` means corrupt data or a wrong key.
 - Contact avatars on shared contact cards, edit history and story attachments
   are not rendered.
-- There is no committed test suite; the fixture plus manual runs above are it.

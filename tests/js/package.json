@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "description": "jsdom tests for the exported pages",
+  "scripts": { "test": "node --test" },
+  "devDependencies": { "jsdom": "^26.0.0" }
+}
