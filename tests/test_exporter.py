@@ -121,3 +121,13 @@ def test_limit_keeps_the_newest(tmp_path):
     text = "".join(f.read_text() for f in (tmp_path / "out" / "chats").rglob("*.js"))
     text += "".join(f.read_text() for f in (tmp_path / "out" / "chats").glob("*.html"))
     assert "Dave message 59" in text and "Dave message 54" not in text
+
+
+def test_group_senders_have_avatar_color_and_reactions_name_people(export):
+    out, _ = export
+    chats = out / "chats"
+    group = next(chats.glob("Weekend*_months/*.js")).read_text()
+    assert 'class=\\"author\\" style=\\"--h:' in group
+    assert '<img class=\\"avatar\\" src=\\"../assets/avatars/Alice' in group
+    alice = next(chats.glob("Alice*_months/*.js")).read_text()
+    assert 'title=\\"Bob, Toby\\"' in alice

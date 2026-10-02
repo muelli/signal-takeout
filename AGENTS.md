@@ -158,7 +158,6 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - Global search matches conversation display titles only, while `--export-only`
   also matches profile names. A contact saved as "Toby" with profile name
   "Tobias" is found by the filter but not by the index search.
-- No per-message avatars next to incoming messages in group chats.
 - `--no-attachments` still exports avatars (they are tiny).
 - The whole search index is held in memory and written in one file; a very
   large profile may want sharding.

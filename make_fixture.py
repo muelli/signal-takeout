@@ -135,9 +135,9 @@ def main() -> None:
     rows = [
         # id, conv, type, sourceServiceId, sent_at, body, extra json
         ("m1", "conv-alice", "incoming", ALICE, now - 2 * day, "Hey, are we still on for Friday?",
-         {"reactions": [{"emoji": "\U0001F44D", "fromId": ME, "timestamp": now},
-                        {"emoji": "\U0001F44D", "fromId": BOB, "timestamp": now},
-                        {"emoji": "\u2764\ufe0f", "fromId": ME, "timestamp": now}]}),
+         {"reactions": [{"emoji": "\U0001F44D", "fromId": "conv-bob", "timestamp": now},
+                        {"emoji": "\U0001F44D", "fromId": "conv-toby", "timestamp": now},
+                        {"emoji": "\u2764\ufe0f", "fromId": "conv-unknown", "timestamp": now}]}),
         ("m2", "conv-alice", "outgoing", None, now - 2 * day + 60000, "Yes! Looking forward to it.",
          {"reactions": [{"emoji": "👍", "fromId": ALICE, "timestamp": now}]}),
         ("m3", "conv-alice", "incoming", ALICE, now - day, "Here's the map",
@@ -152,6 +152,7 @@ def main() -> None:
          "￼ what do you think?",
          {"bodyRanges": [{"start": 0, "length": 1, "mentionAci": ALICE}]}),
         ("m8", "conv-group", "outgoing", None, now - 3600_000, "Sounds good to me", {}),
+        ("m8b", "conv-group", "incoming", ALICE, now - 3000_000, "Count me in", {}),
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
         ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),

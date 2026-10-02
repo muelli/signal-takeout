@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -480,8 +481,11 @@ a { color:#2c6bed; }
 .msg.out .copy { left:auto; right:100%; }
 .bubble:hover .copy, .copy:focus-visible { opacity:1; visibility:visible; transition:opacity .1s; }
 .msg.out .bubble { background:var(--out); color:var(--out-fg); }
-.author { font-size:.75rem; font-weight:600; opacity:.75;
-  margin-bottom:.15rem; }
+.author { font-size:.75rem; font-weight:600; margin-bottom:.15rem;
+  color:hsl(var(--h, 0) 60% 38%); }
+@media (prefers-color-scheme: dark) { .author { color:hsl(var(--h, 0) 70% 72%); } }
+.msg > .avatar { width:1.75rem; height:1.75rem; margin-right:.4rem;
+  align-self:flex-end; font-size:.8rem; }
 .body { white-space:pre-wrap; overflow-wrap:anywhere; }
 .time { font-size:.7rem; opacity:.6; margin-top:.25rem; text-align:right; }
 .system { text-align:center; color:var(--muted); font-size:.8rem;
@@ -1306,8 +1310,18 @@ class Rendered:
     hits: list = field(default_factory=list)
 
 
+def reactor_title(reactions, emoji, name_for_cid) -> str:
+    if not name_for_cid:
+        return ""
+    names = [name_for_cid(r.get("fromId")) for r in reactions
+             if isinstance(r, dict) and r.get("emoji") == emoji]
+    names = [n for n in names if n]
+    return f' title="{esc(", ".join(names))}"' if names else ""
+
+
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
-                        export_att, emit_chunk) -> Rendered:
+                        export_att, emit_chunk, name_for_cid=None,
+                        sender_avatar=None) -> Rendered:
     chunker = Chunker(emit_chunk)
     hits = []
     rendered = 0
@@ -1358,8 +1372,13 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             body = apply_mentions(full_text, data.get("bodyRanges"), name_for_aci)
         inner = []
 
+        sender_html = ""
         if convo["type"] == "group" and not outgoing:
-            inner.append(f'<div class="author">{esc(name_for_aci(row["sourceServiceId"]))}</div>')
+            who = name_for_aci(row["sourceServiceId"])
+            hue = zlib.crc32((row["sourceServiceId"] or who).encode()) % 360
+            inner.append(f'<div class="author" style="--h:{hue}">{esc(who)}</div>')
+            avatar = sender_avatar(row["sourceServiceId"]) if sender_avatar else None
+            sender_html = avatar_html(avatar, who)
 
         if quote:
             inner.append(render_quote(quote, by_type["quote"],
@@ -1390,7 +1409,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             tally = Counter(r["emoji"] for r in reactions
                             if isinstance(r, dict) and r.get("emoji"))
             pills = "".join(
-                f'<span class="reaction">{esc(emoji)}'
+                f'<span class="reaction"{reactor_title(reactions, emoji, name_for_cid)}>{esc(emoji)}'
                 + (f'<span class="rcount">{n}</span>' if n > 1 else "") + "</span>"
                 for emoji, n in tally.items())
             if pills:
@@ -1399,7 +1418,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
         css_class = "msg out" if outgoing else "msg"
         chunker.add(row["sent_at"], f'<div class="{css_class}" id="m{rendered}">'
-                    f'<div class="bubble">{"".join(inner)}</div></div>', rendered)
+                    f'{sender_html}<div class="bubble">{"".join(inner)}</div></div>', rendered)
 
     chunker.close(rendered)
     return Rendered(chunker.chunks, rendered, last_ts, hits)
@@ -1525,6 +1544,8 @@ def main() -> int:
     }
 
     our_aci = load_our_aci(conn)
+    cid_to_name = {cid: c["title"] for cid, c in convos.items()}
+    all_convos = dict(convos)
 
     def name_for_aci(aci):
         if not aci:
@@ -1551,6 +1572,23 @@ def main() -> int:
     (out_dir / "assets" / "takeout.js").write_text(JS, encoding="utf-8")
 
     att_root = data_dir / "attachments.noindex"
+    avatar_dir = out_dir / "assets" / "avatars"
+    aci_to_convo = {c["serviceId"]: c for c in all_convos.values() if c.get("serviceId")}
+    sender_cache: dict = {}
+
+    def sender_avatar(aci):
+        convo = aci_to_convo.get(aci)
+        if not convo:
+            return None
+        if aci not in sender_cache:
+            name = export_avatar(convo, att_root, avatar_dir,
+                                 f"{safe_name(convo['title'])}-{convo['id'][:8]}")
+            sender_cache[aci] = f"../assets/avatars/{name}" if name else None
+        return sender_cache[aci]
+
+    def name_for_cid(cid):
+        return cid_to_name.get(cid)
+
     stats = {"exported": 0, "failed": 0, "reasons": Counter()}
     skipped_empty = 0
     cutoff = newest_cutoff(conn, convos, args.limit) if args.limit else None
@@ -1590,6 +1628,7 @@ def main() -> int:
                 f"{slug}_files",
                 lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
                 emit_chunk,
+                name_for_cid, sender_avatar,
             )
             if not result.count:
                 log.info("    nothing to render, skipped")
