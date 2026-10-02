@@ -19,7 +19,6 @@ import os
 import secrets
 import shutil
 import sys
-import time
 from pathlib import Path
 
 from sqlcipher3 import dbapi2 as sqlcipher
@@ -129,7 +128,7 @@ def main() -> None:
         db.execute("INSERT INTO conversations (id, json, type) VALUES (?,?,?)",
                    (cid, json.dumps(data), data["type"]))
 
-    now = int(time.time() * 1000)
+    now = 1790769600000  # 2026-09-30 12:00 UTC, fixed so tests do not drift
     day = 86400_000
     t0 = now - 5 * day
     long_text = "Long message start. " + "lorem ipsum dolor sit amet " * 200 + "needle-in-the-long-text"
