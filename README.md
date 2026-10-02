@@ -142,8 +142,8 @@ text and an expandable list of the earlier versions.
   shared contacts show their name and numbers.
 - Files keep their original name (non-ASCII characters included) and get their
   extension from the MIME type when the name has none. Exporting again into the
-  same folder replaces a conversation's attachment folder instead of adding
-  duplicates.
+  same folder reuses attachments that were already decrypted (the source file
+  must be unchanged) and removes files that are no longer part of the export.
 
 ## Testing without real data
 

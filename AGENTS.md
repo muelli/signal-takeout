@@ -111,15 +111,18 @@ through `pty.openpty()` from Python instead, set a window size with
   `contact` avatar rows are ignored; the shared contact is drawn from the
   message JSON. `render_conversation` partitions them by type. Quote and
   preview rows are matched to the JSON lists by `orderInMessage`.
-- `export_attachments` mutates the attachment dicts: `_exported` (file name),
+- `AttachmentDir.export` mutates the attachment dicts: `_exported` (file name),
   `_poster`, `_text` (long message body) or `_error`. Renderers read those.
   `long-message` is decoded into `_text` and never written as a file.
 - Decryption is streamed (`iter_stored_file`, 1 MiB chunks). `copy_stored_file`
   writes `name.part` and renames it after the MAC verifies. `read_stored_file`
   joins the stream and is only for small things (avatars, long messages).
 - Exported names keep Unicode (`safe_name(..., unicode=True)`); conversation
-  slugs stay ASCII. Hrefs are percent-encoded with `att_href`. A conversation's
-  `<slug>_files` folder is deleted before it is exported again.
+  slugs stay ASCII. Hrefs are percent-encoded with `att_href`. `AttachmentDir` keeps a
+  `.manifest.json` in each `<slug>_files` folder (source path to name, size and
+  source size and mtime); a second run reuses matching files, re-decrypts
+  anything missing or changed under its old name, and `finish()` deletes
+  unreferenced files. The same source path used twice shares one file.
 - Preview URLs are only linked when they start with http:// or https://.
 - tqdm is optional (`progress()` returns the iterable when it is missing) and
   uses `disable=None`, so it is off when stderr is not a tty. The main loop

@@ -167,3 +167,30 @@ def test_bad_date_is_rejected(tmp_path):
     res = subprocess.run([sys.executable, str(ROOT / "signal_takeout.py"), "--since", "yesterday"],
                          capture_output=True, text=True)
     assert res.returncode == 2 and "not a date" in res.stderr
+
+
+def test_second_run_reuses_attachments_and_drops_stale_ones(tmp_path):
+    def run(*extra):
+        return subprocess.run([sys.executable, str(ROOT / "signal_takeout.py"), "--data-dir",
+                               str(tmp_path / "fake"), "-o", str(tmp_path / "out"), *extra],
+                              check=True, capture_output=True, text=True).stdout
+    subprocess.run([sys.executable, str(ROOT / "make_fixture.py"), str(tmp_path / "fake")],
+                   check=True, capture_output=True)
+    first = run()
+    files = tmp_path / "out" / "chats"
+    carol = next(files.glob("Carol*_files"))
+    before = {f.name: f.stat().st_mtime_ns for f in carol.iterdir() if f.is_file() and f.name[0] != "."}
+    assert "reused" not in first and len(before) > 5
+
+    second = run()
+    assert "reused from an earlier run" in second and "0 failed" in second
+    assert {f.name: f.stat().st_mtime_ns for f in carol.iterdir() if f.is_file() and f.name[0] != "."} == before
+
+    victim = next(f for f in carol.iterdir() if f.suffix == ".pdf")
+    victim.unlink()
+    (carol / "stale.bin").write_bytes(b"x")
+    (carol / "partial.mp4").write_bytes(b"truncated")
+    third = run()
+    assert victim.is_file() and victim.stat().st_size > 100
+    assert not (carol / "stale.bin").exists()
+    assert "reused from an earlier run" in third

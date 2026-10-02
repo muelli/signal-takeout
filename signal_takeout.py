@@ -1232,61 +1232,136 @@ def describe_system(data: dict) -> str | None:
     return None
 
 
-def export_attachments(atts, att_root: Path, att_dir: Path, stats: dict) -> None:
-    def fail(att, reason):
-        att["_error"] = reason
-        stats["failed"] += 1
-        stats["reasons"][reason] += 1
-        log.warning("    attachment failed (%s): %s %s (%s, message %s)", reason,
-                    att.get("fileName") or "", att["path"], att.get("contentType"),
-                    att.get("messageId"))
+class AttachmentDir:
+    """Decrypts a conversation's attachments into att_dir, reusing files that an
+    earlier run produced from the same source file."""
 
-    for att in atts:
-        if not att.get("path"):
-            att["_error"] = missing_reason(att)
-            continue
-        src = att_root / att["path"]
-        if att["attachmentType"] == "long-message" and not src.is_file():
-            log.debug("    long message file %s is gone, body already holds the text", att["path"])
-            continue
-        if not src.is_file():
-            fail(att, "file missing on disk")
-            continue
-        if att["attachmentType"] == "long-message":
-            try:
-                att["_text"] = read_stored_file(src, att).decode("utf-8")
-            except (OSError, ValueError) as exc:
-                log.debug("    long message %s unusable: %s", att["path"], exc)
-            continue
-        att_dir.mkdir(parents=True, exist_ok=True)
-        base = safe_name(att["fileName"], unicode=True) if att.get("fileName") else ""
-        if not base or "." not in base:
-            ctype = (att.get("contentType") or "").split(";")[0].strip()
-            base = (base or att["path"].replace("/", "_")) + (
-                mimetypes.guess_extension(ctype) or ".bin")
-        dest = att_dir / base
-        n = 1
-        while dest.exists():
-            dest = att_dir / f"{dest.stem}_{n}{dest.suffix}"
-            n += 1
+    MANIFEST = ".manifest.json"
+
+    def __init__(self, att_root: Path, att_dir: Path, stats: dict):
+        self.att_root, self.att_dir, self.stats = att_root, att_dir, stats
+        self.old: dict = {}
         try:
-            copy_stored_file(src, att, dest)
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            fail(att, str(exc))
-            continue
-        att["_exported"] = dest.name
-        stats["exported"] += 1
-        if att.get("screenshotPath"):
-            poster = dest.with_name(dest.stem + ".poster" + (
-                mimetypes.guess_extension(att.get("screenshotContentType") or "") or ".jpg"))
+            self.old = json.loads((att_dir / self.MANIFEST).read_text())
+        except (OSError, ValueError):
+            pass
+        self.new: dict = {}
+        self.taken = {e["name"] for e in self.old.values()} | {
+            e["poster"] for e in self.old.values() if e.get("poster")}
+
+    def fingerprint(self, src: Path) -> list:
+        st = src.stat()
+        return [st.st_size, st.st_mtime_ns]
+
+    def reusable(self, att, src: Path):
+        prev = self.old.get(att["path"])
+        if not prev or prev.get("src") != self.fingerprint(src):
+            return None
+        dest = self.att_dir / prev["name"]
+        try:
+            if dest.stat().st_size != prev["size"]:
+                return None
+            if prev.get("poster") and not (self.att_dir / prev["poster"]).is_file():
+                return None
+        except OSError:
+            return None
+        return prev
+
+    def fresh_name(self, base: str) -> str:
+        name, stem, suffix, n = base, Path(base).stem, Path(base).suffix, 1
+        while name in self.taken:
+            name = f"{stem}_{n}{suffix}"
+            n += 1
+        self.taken.add(name)
+        return name
+
+    def export(self, atts) -> None:
+        stats = self.stats
+
+        def fail(att, reason):
+            att["_error"] = reason
+            stats["failed"] += 1
+            stats["reasons"][reason] += 1
+            log.warning("    attachment failed (%s): %s %s (%s, message %s)", reason,
+                        att.get("fileName") or "", att["path"], att.get("contentType"),
+                        att.get("messageId"))
+
+        for att in atts:
+            if not att.get("path"):
+                att["_error"] = missing_reason(att)
+                continue
+            src = self.att_root / att["path"]
+            if att["attachmentType"] == "long-message" and not src.is_file():
+                log.debug("    long message file %s is gone, body already holds the text",
+                          att["path"])
+                continue
+            if not src.is_file():
+                fail(att, "file missing on disk")
+                continue
+            if att["attachmentType"] == "long-message":
+                try:
+                    att["_text"] = read_stored_file(src, att).decode("utf-8")
+                except (OSError, ValueError) as exc:
+                    log.debug("    long message %s unusable: %s", att["path"], exc)
+                continue
+            self.att_dir.mkdir(parents=True, exist_ok=True)
+
+            prev = self.new.get(att["path"]) or self.reusable(att, src)
+            if prev:
+                self.new[att["path"]] = prev
+                att["_exported"] = prev["name"]
+                if prev.get("poster"):
+                    att["_poster"] = prev["poster"]
+                stats["exported"] += 1
+                stats["reused"] += 1
+                log.debug("    attachment %s reused as %s", att["path"], prev["name"])
+                continue
+
+            base = safe_name(att["fileName"], unicode=True) if att.get("fileName") else ""
+            if not base or "." not in base:
+                ctype = (att.get("contentType") or "").split(";")[0].strip()
+                base = (base or att["path"].replace("/", "_")) + (
+                    mimetypes.guess_extension(ctype) or ".bin")
+            was = self.old.get(att["path"]) or {}
+            dest = self.att_dir / (was.get("name") or self.fresh_name(base))
             try:
-                copy_stored_file(att_root / att["screenshotPath"], {
-                    "localKey": att.get("screenshotLocalKey"),
-                    "size": att.get("screenshotSize")}, poster)
-                att["_poster"] = poster.name
-            except (OSError, ValueError) as exc:
-                log.debug("    poster %s unusable: %s", att["screenshotPath"], exc)
-        log.debug("    attachment %s -> %s", att["path"], dest.name)
+                copy_stored_file(src, att, dest)
+            except Exception as exc:  # noqa: BLE001 - report and continue
+                fail(att, str(exc))
+                continue
+            att["_exported"] = dest.name
+            stats["exported"] += 1
+            entry = {"name": dest.name, "size": dest.stat().st_size,
+                     "src": self.fingerprint(src)}
+            if att.get("screenshotPath"):
+                poster = self.att_dir / (was.get("poster") or self.fresh_name(
+                    dest.stem + ".poster" + (
+                        mimetypes.guess_extension(att.get("screenshotContentType") or "")
+                        or ".jpg")))
+                try:
+                    copy_stored_file(self.att_root / att["screenshotPath"], {
+                        "localKey": att.get("screenshotLocalKey"),
+                        "size": att.get("screenshotSize")}, poster)
+                    att["_poster"] = poster.name
+                    entry["poster"] = poster.name
+                except (OSError, ValueError) as exc:
+                    log.debug("    poster %s unusable: %s", att["screenshotPath"], exc)
+            self.new[att["path"]] = entry
+            log.debug("    attachment %s -> %s", att["path"], dest.name)
+
+    def finish(self) -> None:
+        """Drop files no longer referenced and remember what is here for next time."""
+        if not self.att_dir.is_dir():
+            return
+        keep = {self.MANIFEST}
+        for entry in self.new.values():
+            keep.add(entry["name"])
+            if entry.get("poster"):
+                keep.add(entry["poster"])
+        for f in self.att_dir.iterdir():
+            if f.name not in keep:
+                f.unlink() if f.is_file() or f.is_symlink() else shutil.rmtree(f, ignore_errors=True)
+        (self.att_dir / self.MANIFEST).write_text(json.dumps(self.new))
 
 
 CHUNK_CAP = 2000
@@ -1635,7 +1710,7 @@ def main() -> int:
     def name_for_cid(cid):
         return cid_to_name.get(cid)
 
-    stats = {"exported": 0, "failed": 0, "reasons": Counter()}
+    stats = {"exported": 0, "reused": 0, "failed": 0, "reasons": Counter()}
     skipped_empty = 0
     window = Window(
         start=int(args.since.timestamp() * 1000) if args.since else 0,
@@ -1660,7 +1735,7 @@ def main() -> int:
             slug = f"{safe_name(convo['title'])}-{convo['id'][:8]}"
             att_dir = out_dir / "chats" / f"{slug}_files"
             log.info("[%d/%d] %s", pos, len(convos), convo["title"])
-            shutil.rmtree(att_dir, ignore_errors=True)
+            store = AttachmentDir(att_root, att_dir, stats)
 
             months_rel = f"{slug}_months"
             months_dir = out_dir / "chats" / months_rel
@@ -1679,14 +1754,16 @@ def main() -> int:
                          desc=convo["title"][:30], unit="msg", leave=False, position=1),
                 attachments, name_for_aci,
                 f"{slug}_files",
-                lambda atts, att_dir=att_dir: export_attachments(atts, att_root, att_dir, stats),
+                store.export,
                 emit_chunk,
                 name_for_cid, sender_avatar,
             )
             if not result.count:
+                shutil.rmtree(att_dir, ignore_errors=True)
                 log.info("    nothing to render, skipped")
                 skipped_empty += 1
                 continue
+            store.finish()
             log.info("    %d entries, last message %s", result.count, fmt_time(result.last_ts))
 
             (months_dir / "find.js").write_text(
@@ -1738,7 +1815,8 @@ def main() -> int:
         print(f"Date range: {args.since:%Y-%m-%d}" if args.since else "Date range: start",
               f"to {args.until:%Y-%m-%d}" if args.until else "to now")
     if not args.no_attachments:
-        print(f"Attachments: {stats['exported']} exported, {stats['failed']} failed.")
+        reused = f" ({stats['reused']} reused from an earlier run)" if stats["reused"] else ""
+        print(f"Attachments: {stats['exported']} exported{reused}, {stats['failed']} failed.")
         for reason, n in stats["reasons"].most_common():
             print(f"  {n:5d}  {reason}")
     return 0
