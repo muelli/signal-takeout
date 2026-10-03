@@ -133,6 +133,14 @@ calls become one-line system entries. Your own bubbles use the chat colour set i
 (flat, gradient or custom), falling back to the account default. An edited message shows its current
 text and an expandable list of the earlier versions.
 
+### Media overview
+
+A conversation with any exported media or link previews gets a "Media (N)" link
+in its header, leading to `<chat>_media.html`: a photo and video grid grouped by month
+(newest first, videos show Signal's poster frame), then audio, other files and
+links. Each entry has an "in chat" link that jumps to the message. Escape goes
+back to the chat.
+
 ### Attachments
 
 - Images show inline. Videos get a player with Signal's stored poster frame,

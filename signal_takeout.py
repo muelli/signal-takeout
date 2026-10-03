@@ -35,6 +35,7 @@ import time
 import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
+from itertools import groupby
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -566,6 +567,31 @@ a { color:#2c6bed; }
 .chat-head .avatar { width:2.5rem; height:2.5rem; }
 .chat-head h1 { font-size:1.1rem; line-height:1.2; margin:0; }
 .chat-head .sub { margin-bottom:0; font-size:.8rem; }
+.tabs { display:flex; flex-wrap:wrap; gap:1rem; margin:1rem 0 .5rem; }
+h2 { font-size:1.1rem; margin:1.5rem 0 .25rem; }
+h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .4rem; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(7.5rem,1fr)); gap:.3rem;
+  content-visibility:auto; contain-intrinsic-size:auto 8rem; }
+.tile { position:relative; aspect-ratio:1; background:var(--in); border-radius:6px;
+  overflow:hidden; }
+.tile .thumb { display:block; width:100%; height:100%; text-decoration:none; }
+.tile img { width:100%; height:100%; object-fit:cover; display:block; }
+.tile .novideo { display:flex; align-items:flex-end; width:100%;
+  height:100%; padding:.5rem; background:#222; color:#ccc; font-size:.7rem;
+  overflow:hidden; word-break:break-all; }
+.play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:2.2rem; height:2.2rem; line-height:2.2rem; text-align:center; border-radius:50%;
+  background:rgba(0,0,0,.55); color:#fff; font-size:.9rem; pointer-events:none; }
+.goto { position:absolute; right:.25rem; bottom:.25rem; padding:0 .4rem; border-radius:6px;
+  background:rgba(0,0,0,.65); color:#fff; font-size:.7rem; text-decoration:none;
+  opacity:0; }
+.tile:hover .goto, .goto:focus-visible { opacity:1; }
+.rows { list-style:none; padding:0; margin:0; }
+.rows li { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .75rem;
+  padding:.5rem 0; border-bottom:1px solid var(--line); }
+.rows .goto { position:static; background:none; color:var(--muted); opacity:1;
+  text-decoration:underline; }
+.rows .time { color:var(--muted); font-size:.75rem; margin:0 0 0 auto; opacity:1; }
 .convo-name { font-weight:600; }
 .convo-meta { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .day { text-align:center; color:var(--muted); font-size:.78rem;
@@ -930,15 +956,15 @@ function initFind(chat) {
 
 function initKeys() {
   const back = $("back"), input = $("find");
-  if (!back || !input) return;
+  if (!back) return;
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.altKey) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    if (input && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       input.focus();
       input.select();
-    } else if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
+    } else if (input && e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       input.focus();
     } else if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -1488,6 +1514,8 @@ class Rendered:
     count: int
     last_ts: int | None
     hits: list = field(default_factory=list)
+    media: list = field(default_factory=list)
+    links: list = field(default_factory=list)
 
 
 def reactor_title(reactions, emoji, name_for_cid) -> str:
@@ -1504,6 +1532,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                         sender_avatar=None) -> Rendered:
     chunker = Chunker(emit_chunk)
     hits = []
+    media = []
+    links = []
     rendered = 0
     last_ts = None
     for seen, row in enumerate(rows, 1):
@@ -1571,12 +1601,20 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                 inner.append(f'<div class="body">{esc(body)}</div>')
             for att in by_type["attachment"]:
                 inner.append(render_attachment(att, att_rel_dir))
+                if att.get("_exported"):
+                    media.append({"n": rendered, "ts": row["sent_at"], "name": att["_exported"],
+                                  "poster": att.get("_poster"), "type": att.get("contentType") or "",
+                                  "label": att.get("fileName") or "", "size": att.get("size"),
+                                  "flags": att.get("flags") or 0})
             if sticker:
                 inner.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
                                             att_rel_dir))
             for idx, preview in enumerate(previews):
                 image = next((a for a in by_type["preview"] if a["orderInMessage"] == idx), None)
                 inner.append(render_preview(preview, image, att_rel_dir))
+                if (preview.get("url") or "").startswith(("http://", "https://")):
+                    links.append({"n": rendered, "ts": row["sent_at"], "url": preview["url"],
+                                  "title": preview.get("title") or preview["url"]})
             inner.extend(render_contact(c) for c in contacts)
             searchable = " ".join(t for t in (
                 [body] + [a.get("caption") for a in by_type["attachment"]]
@@ -1610,7 +1648,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                     f'{sender_html}<div class="bubble">{"".join(inner)}</div></div>', rendered)
 
     chunker.close(rendered)
-    return Rendered(chunker.chunks, rendered, last_ts, hits)
+    return Rendered(chunker.chunks, rendered, last_ts, hits, media, links)
 
 
 def avatar_html(src: str | None, title: str) -> str:
@@ -1620,7 +1658,7 @@ def avatar_html(src: str | None, title: str) -> str:
     return f'<span class="avatar ph" aria-hidden="true">{esc(initial)}</span>'
 
 
-def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
+def chat_header(convo, count: int, avatar_src: str | None, chunks, media_link: str = "") -> str:
     jump = "".join(f'<option value="{esc(c["id"])}">{esc(c["label"])} ({c["count"]})</option>'
                    for c in chunks)
     return (
@@ -1628,7 +1666,7 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
         f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
         f"<h1>{esc(convo['title'])}</h1>"
         f'<div class="sub">{count} entries &middot; '
-        f'<a id="back" href="../index.html">back to index</a></div></div></div>'
+        f'{media_link}<a id="back" href="../index.html">back to index</a></div></div></div>'
         '<div class="findbar">'
         '<input id="find" type="search" autocomplete="off" '
         'placeholder="Search this conversation">'
@@ -1638,6 +1676,79 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
         f'<select id="jump" aria-label="Jump to month">{jump}</select></div>'
         '<div class="dayfloat" id="dayfloat" hidden></div></div>'
     )
+
+
+def media_kind(item: dict) -> str:
+    if item["type"].startswith(("image/", "video/")):
+        return "media"
+    return "audio" if item["type"].startswith("audio/") else "files"
+
+
+def media_goto(chat_href: str, n: int) -> str:
+    return f'<a class="goto" href="{esc(chat_href)}#m{n}" title="Show in chat">in chat</a>'
+
+
+def media_tile(item: dict, rel_dir: str, chat_href: str) -> str:
+    href = att_href(rel_dir, item["name"])
+    label = esc(item["label"] or item["type"])
+    if item["type"].startswith("image/"):
+        thumb = f'<img loading="lazy" decoding="async" src="{href}" alt="{label}">'
+    elif item["poster"]:
+        thumb = (f'<img loading="lazy" decoding="async" src="{att_href(rel_dir, item["poster"])}" '
+                 f'alt="{label}"><span class="play">&#9654;</span>')
+    else:
+        thumb = f'<span class="novideo">{label}</span><span class="play">&#9654;</span>'
+    return (f'<div class="tile"><a class="thumb" href="{href}">{thumb}</a>'
+            f'{media_goto(chat_href, item["n"])}</div>')
+
+
+def media_row(item: dict, rel_dir: str, chat_href: str) -> str:
+    href = att_href(rel_dir, item["name"])
+    when = f'<span class="time">{esc(fmt_time(item["ts"]))}</span>'
+    if media_kind(item) == "audio":
+        tag = "Voice message" if item["flags"] & VOICE_MESSAGE else esc(item["label"] or "Audio")
+        body = (f'<div class="att-label">{tag}</div>'
+                f'<audio controls preload="none" src="{href}"></audio>')
+    else:
+        size = human_size(item["size"])
+        detail = f' <span class="att-size">({size})</span>' if size else ""
+        name = esc(item["label"] or item["name"])
+        body = f'<a class="att-file" href="{href}" download="{esc(item["name"])}">\U0001F4CE {name}{detail}</a>'
+    return f'<li>{body}{when}{media_goto(chat_href, item["n"])}</li>'
+
+
+def render_media_page(convo, media: list, links: list, avatar_src, rel_dir: str,
+                      chat_href: str) -> str:
+    groups = {"media": [], "audio": [], "files": []}
+    for item in reversed(media):
+        groups[media_kind(item)].append(item)
+    sections = []
+    tabs = []
+
+    def add(key, title, count, body):
+        if count:
+            tabs.append(f'<a href="#{key}">{title} ({count})</a>')
+            sections.append(f'<section id="{key}"><h2>{title}</h2>{body}</section>')
+
+    grid = "".join(
+        f'<h3 class="month">{esc(label)}</h3><div class="grid">'
+        + "".join(media_tile(i, rel_dir, chat_href) for i in items) + "</div>"
+        for (_, label), items in ((k, list(g)) for k, g in groupby(
+            groups["media"], key=lambda i: month_of(i["ts"]))))
+    add("media", "Photos and videos", len(groups["media"]), grid)
+    for key, title in (("audio", "Audio"), ("files", "Files")):
+        add(key, title, len(groups[key]), '<ul class="rows">' + "".join(
+            media_row(i, rel_dir, chat_href) for i in groups[key]) + "</ul>")
+    link_rows = "".join(
+        f'<li><a href="{esc(l["url"])}" target="_blank" rel="noopener noreferrer">'
+        f'{esc(l["title"])}</a><div class="purl">{esc(l["url"])}</div>'
+        f'<span class="time">{esc(fmt_time(l["ts"]))}</span>{media_goto(chat_href, l["n"])}</li>'
+        for l in reversed(links))
+    add("links", "Links", len(links), f'<ul class="rows">{link_rows}</ul>')
+    return (f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
+            f'<h1>{esc(convo["title"])}: media</h1><div class="sub">'
+            f'<a id="back" href="{esc(chat_href)}">back to chat</a></div></div></div>'
+            f'<nav class="tabs">{"".join(tabs)}</nav>{"".join(sections)}')
 
 
 def chat_timeline(chunks, months_rel: str, build: str, out_color: str | None = None) -> str:
@@ -1847,11 +1958,21 @@ def main() -> int:
             link = f"chats/{slug}.html"
             avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
             avatar_src = f"assets/avatars/{avatar}" if avatar else None
+            media_link = ""
+            if result.media or result.links:
+                (out_dir / "chats" / f"{slug}_media.html").write_text(PAGE.format(
+                    title=esc(f"{convo['title']}: media"), css=f"../assets/style.css?v={build}",
+                    content=render_media_page(convo, result.media, result.links,
+                                              f"../{avatar_src}" if avatar_src else None,
+                                              f"{slug}_files", f"{slug}.html"),
+                    scripts=f'<script src="../assets/takeout.js?v={build}"></script>'))
+                media_link = (f'<a href="{esc(slug)}_media.html">Media ('
+                              f'{len(result.media) + len(result.links)})</a> &middot; ')
             (out_dir / "chats" / f"{slug}.html").write_text(
                 PAGE.format(title=esc(convo["title"]), css=f"../assets/style.css?v={build}",
                             content=(chat_header(convo, result.count,
                                                  f"../{avatar_src}" if avatar_src else None,
-                                                 result.chunks)
+                                                 result.chunks, media_link)
                                      + chat_timeline(result.chunks, months_rel, build,
                                                      chat_color_css(convo["color"], color_defaults))),
                             scripts=f'<script src="../assets/takeout.js?v={build}"></script>')

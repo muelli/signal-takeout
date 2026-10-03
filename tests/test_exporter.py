@@ -220,3 +220,36 @@ def test_default_lightness_matches_signal(hue, expected):
 def test_unknown_colour_is_left_to_the_stylesheet():
     assert st.chat_color_css({"conversationColor": "nonsense"}, {}) is None
     assert st.chat_color_css({"conversationColor": "custom"}, {}) is None
+
+
+def media_page(out, prefix):
+    return next(out.glob(f"chats/{prefix}*_media.html")).read_text()
+
+
+def test_media_page_groups_by_kind_and_links_back_into_the_chat(export):
+    out, _ = export
+    page = media_page(out, "Carol")
+    for section in ("media", "audio", "files", "links"):
+        assert f'<section id="{section}">' in page
+    assert "beach.mp4" in page and "Quarterly Report" in page
+    assert "Voice message" in page and "https://example.com/a" in page
+    assert "huge.zip" not in page
+    chat = next(p for p in out.glob("chats/Carol*.html") if not p.name.endswith("_media.html"))
+    assert f'href="{chat.name[:-5]}.html#m1"' in page
+    assert f'href="{chat.name[:-5]}_media.html">Media (5)</a>' in chat.read_text()
+    assert 'id="back" href="' + chat.name in page
+
+
+def test_media_page_shows_posters_and_placeholders(export):
+    out, _ = export
+    page = media_page(out, "Carol")
+    assert page.count('class="play"') == 2
+    assert page.count('class="novideo"') == 1 and "<img" in page
+    alice = media_page(out, "Alice")
+    assert "map.png" in alice and '<section id="audio">' not in alice
+
+
+def test_chats_without_media_have_no_media_page(export):
+    out, _ = export
+    assert not list(out.glob("chats/Dave*_media.html"))
+    assert "_media.html" not in next(out.glob("chats/Dave*.html")).read_text()

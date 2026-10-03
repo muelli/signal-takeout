@@ -12,7 +12,7 @@ Two files matter: `signal_takeout.py` (everything, including the CSS and the
 browser JS as string constants) and `make_fixture.py` (synthetic data dir).
 
 Output layout: `index.html`, `chats/<slug>.html`, `chats/<slug>_files/`,
-`chats/<slug>_months/{<month>.js,find.js}`,
+`chats/<slug>_media.html`, `chats/<slug>_months/{<month>.js,find.js}`,
 `assets/{style.css,takeout.js,search-index.js,avatars/}`.
 
 ## Working rules for this user
@@ -132,6 +132,12 @@ through `pty.openpty()` from Python instead, set a window size with
   are `{"id", "value"}`. Signal draws gradients with `background-attachment:
   fixed`; here each bubble gets its own gradient. Wallpapers are not exported
   because Desktop 8.27 has none (migration 1410 removes the fields).
+- Media page: `render_conversation` collects small dicts for every exported
+  attachment (`Rendered.media`) and every http(s) preview (`Rendered.links`);
+  `render_media_page` writes `<slug>_media.html` (static, no JS besides
+  `initKeys`, whose `#back` link points at the chat there). Images use the
+  original file with `loading=lazy`, there are no generated thumbnails.
+  "in chat" links use `#mN`.
 - Preview URLs are only linked when they start with http:// or https://.
 - tqdm is optional (`progress()` returns the iterable when it is missing) and
   uses `disable=None`, so it is off when stderr is not a tty. The main loop
