@@ -123,6 +123,15 @@ through `pty.openpty()` from Python instead, set a window size with
   source size and mtime); a second run reuses matching files, re-decrypts
   anything missing or changed under its old name, and `finish()` deletes
   unreferenced files. The same source path used twice shares one file.
+- Chat colour: `chat_color_css` resolves the conversation's `conversationColor`
+  (own value, else `items.defaultConversationColor`; `custom` uses `customColor`,
+  else `customColors[customColorId]`, else the default's custom data) to a CSS
+  background and sets `--out` on `#timeline`. Palette and `getHSL` lightness
+  table are copied from Signal (`stylesheets/_variables.scss`,
+  `ts/util/getHSL.std.ts`, `ts/util/getCustomColorStyle.dom.ts`). `items` rows
+  are `{"id", "value"}`. Signal draws gradients with `background-attachment:
+  fixed`; here each bubble gets its own gradient. Wallpapers are not exported
+  because Desktop 8.27 has none (migration 1410 removes the fields).
 - Preview URLs are only linked when they start with http:// or https://.
 - tqdm is optional (`progress()` returns the iterable when it is missing) and
   uses `disable=None`, so it is off when stderr is not a tty. The main loop

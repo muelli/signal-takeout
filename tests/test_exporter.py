@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import subprocess
 import sys
@@ -194,3 +195,28 @@ def test_second_run_reuses_attachments_and_drops_stale_ones(tmp_path):
     assert victim.is_file() and victim.stat().st_size > 100
     assert not (carol / "stale.bin").exists()
     assert "reused from an earlier run" in third
+
+
+def timeline_style(out, prefix):
+    page = next(out.glob(f"chats/{prefix}*.html")).read_text()
+    return re.search(r'<div id="timeline" style="--out:([^"]*)"', page).group(1)
+
+
+def test_chat_colours_follow_signal_rules(export):
+    out, _ = export
+    assert timeline_style(out, "Alice") == "#cf163e"
+    assert timeline_style(out, "Weekend") == "linear-gradient(168deg, #e57c00, #5e0000)"
+    assert timeline_style(out, "Bob") == "hsl(120, 80%, 30%)"
+    assert timeline_style(out, "Dave") == ("linear-gradient(180deg, hsl(300, 90%, 50%), "
+                                           "hsl(240, 70%, 50%))")
+    assert timeline_style(out, "Toby") == "#077d92"
+
+
+@pytest.mark.parametrize("hue,expected", [(0, 45), (30, 37.5), (100, 30), (210, 40), (270, 45), (330, 42.5)])
+def test_default_lightness_matches_signal(hue, expected):
+    assert st.default_lightness(hue) == expected
+
+
+def test_unknown_colour_is_left_to_the_stylesheet():
+    assert st.chat_color_css({"conversationColor": "nonsense"}, {}) is None
+    assert st.chat_color_css({"conversationColor": "custom"}, {}) is None

@@ -109,20 +109,31 @@ def main() -> None:
     db.execute("INSERT INTO items (id, json) VALUES ('uuid_id', ?)",
                (json.dumps({"id": "uuid_id", "value": f"{ME}.1"}),))
 
+    db.execute("INSERT INTO items (id, json) VALUES ('defaultConversationColor', ?)",
+               (json.dumps({"id": "defaultConversationColor", "value": {"color": "teal"}}),))
+    db.execute("INSERT INTO items (id, json) VALUES ('customColors', ?)",
+               (json.dumps({"id": "customColors", "value": {"version": 1, "colors": {
+                   "c1": {"start": {"hue": 120, "saturation": 80}}}}}),))
+
     convos = [
         ("conv-alice", {"type": "private", "serviceId": ALICE,
                         "profileName": "Alice", "profileFamilyName": "Anderson",
-                        "profileAvatar": encrypted_avatar("avatar-alice")}),
+                        "profileAvatar": encrypted_avatar("avatar-alice"),
+                        "conversationColor": "crimson"}),
         ("conv-bob", {"type": "private", "serviceId": BOB, "systemGivenName": "Bob",
-                      "avatar": {"path": "ab/avatar-bob"}}),
-        ("conv-group", {"type": "group", "name": "Weekend Plans"}),
+                      "avatar": {"path": "ab/avatar-bob"},
+                      "conversationColor": "custom", "customColorId": "c1"}),
+        ("conv-group", {"type": "group", "name": "Weekend Plans", "conversationColor": "ember"}),
         ("conv-toby", {"type": "private", "serviceId": TOBY, "systemGivenName": "Toby",
                        "profileName": "Tobias", "profileFamilyName": "Weber",
                        "avatar": {"path": "ab/gone", "localKey": "AAAA"},
                        "profileAvatar": encrypted_avatar("avatar-toby")}),
         ("conv-empty", {"type": "private", "e164": "+15550000000"}),
         ("conv-carol", {"type": "private", "serviceId": CAROL, "systemGivenName": "Carol"}),
-        ("conv-dave", {"type": "private", "serviceId": DAVE, "systemGivenName": "Dave"}),
+        ("conv-dave", {"type": "private", "serviceId": DAVE, "systemGivenName": "Dave",
+                       "conversationColor": "custom",
+                       "customColor": {"start": {"hue": 300, "saturation": 90, "lightness": 0.5},
+                                       "end": {"hue": 240, "saturation": 70}, "deg": 90}}),
     ]
     for cid, data in convos:
         db.execute("INSERT INTO conversations (id, json, type) VALUES (?,?,?)",

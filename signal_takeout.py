@@ -351,8 +351,80 @@ def load_conversations(conn) -> dict:
             "names": conversation_names(data),
             "avatars": [a for a in (data.get("avatar"), data.get("profileAvatar"))
                         if isinstance(a, dict) and a.get("path")],
+            "color": {k: data.get(k) for k in ("conversationColor", "customColor", "customColorId")},
         }
     return convos
+
+
+FLAT_COLORS = {
+    "blue": "#336ba3", "burlap": "#6f6a58", "crimson": "#cf163e", "forest": "#3b7845",
+    "indigo": "#6058ca", "plum": "#aa377a", "steel": "#71717f", "taupe": "#8f616a",
+    "teal": "#077d92", "vermilion": "#c73f0a", "violet": "#9932c8", "wintergreen": "#1d8663",
+}
+GRADIENT_COLORS = {
+    "ultramarine": (180, "#0552f0", "#2c6bed"), "basil": (180, "#2f9373", "#077343"),
+    "ember": (168, "#e57c00", "#5e0000"), "fluorescent": (192, "#ec13dd", "#1b36c6"),
+    "infrared": (192, "#f65560", "#442ced"), "lagoon": (180, "#004066", "#32867d"),
+    "midnight": (180, "#2c2c3a", "#787891"), "sea": (180, "#498fd4", "#2c66a0"),
+    "sublime": (180, "#6281d5", "#974460"), "tangerine": (192, "#db7133", "#911231"),
+}
+LIGHTNESS_AT_HUE = {0: 45, 60: 30, 180: 30, 240: 50, 300: 40, 360: 45}
+
+
+def default_lightness(hue: float) -> float:
+    lo, hi = next(((a, b) for a, b in ((0, 60), (60, 180), (180, 240), (240, 300))
+                   if hue < b), (300, 360))
+    return LIGHTNESS_AT_HUE[lo] + (hue - lo) * (LIGHTNESS_AT_HUE[hi] - LIGHTNESS_AT_HUE[lo]) / (hi - lo)
+
+
+def hsl_css(color: dict) -> str:
+    hue = color.get("hue", 0)
+    lightness = color.get("lightness")
+    lightness = default_lightness(hue) if lightness is None else lightness * 100
+    return f"hsl({hue:g}, {color.get('saturation', 0):g}%, {lightness:g}%)"
+
+
+def chat_color_css(color: dict, defaults: dict) -> str | None:
+    """CSS background for our outgoing bubbles, resolved like Signal does:
+    the chat's own colour, else the account default."""
+    name = color.get("conversationColor") or defaults.get("color") or "ultramarine"
+    if name in FLAT_COLORS:
+        return FLAT_COLORS[name]
+    if name in GRADIENT_COLORS:
+        deg, start, end = GRADIENT_COLORS[name]
+        return f"linear-gradient({deg}deg, {start}, {end})"
+    if name != "custom":
+        return None
+    default_data = defaults.get("customColorData") or {}
+    custom = (color.get("customColor")
+              or (defaults.get("customColors") or {}).get(color.get("customColorId"))
+              or default_data.get("value"))
+    if not isinstance(custom, dict) or not isinstance(custom.get("start"), dict):
+        return None
+    if not isinstance(custom.get("end"), dict):
+        return hsl_css(custom["start"])
+    return (f"linear-gradient({270 - (custom.get('deg') or 0):g}deg, "
+            f"{hsl_css(custom['start'])}, {hsl_css(custom['end'])})")
+
+
+def load_chat_color_defaults(conn) -> dict:
+    """Account-wide default chat colour and the custom colour list, from items."""
+    out = {}
+    if not table_exists(conn, "items"):
+        return out
+    for key in ("defaultConversationColor", "customColors"):
+        row = conn.execute("SELECT json FROM items WHERE id = ?", (key,)).fetchone()
+        try:
+            value = json.loads(row["json"]).get("value") if row and row["json"] else None
+        except (json.JSONDecodeError, AttributeError):
+            value = None
+        if not isinstance(value, dict):
+            continue
+        if key == "customColors":
+            out["customColors"] = value.get("colors") or {}
+        else:
+            out.update(color=value.get("color"), customColorData=value.get("customColorData"))
+    return out
 
 
 def conversation_names(data: dict) -> list[str]:
@@ -1568,7 +1640,7 @@ def chat_header(convo, count: int, avatar_src: str | None, chunks) -> str:
     )
 
 
-def chat_timeline(chunks, months_rel: str, build: str) -> str:
+def chat_timeline(chunks, months_rel: str, build: str, out_color: str | None = None) -> str:
     sections = "".join(
         f'<section class="chunk" data-id="{esc(c["id"])}" '
         f'data-src="{esc(months_rel)}/{esc(c["id"])}.js?v={build}" data-first="{c["first"]}" '
@@ -1577,7 +1649,8 @@ def chat_timeline(chunks, months_rel: str, build: str) -> str:
         f'<div class="chunk-label">{esc(c["label"])} &middot; {c["count"]} entries</div></section>'
         for c in chunks
     )
-    return (f'<div id="timeline" data-find="{esc(months_rel)}/find.js?v={build}">{sections}</div>'
+    style = f' style="--out:{esc(out_color)}"' if out_color else ""
+    return (f'<div id="timeline"{style} data-find="{esc(months_rel)}/find.js?v={build}">{sections}</div>'
             '<noscript><p class="missing">Messages are loaded in month chunks by '
             'JavaScript. Enable it to read this conversation.</p></noscript>')
 
@@ -1665,6 +1738,7 @@ def main() -> int:
     }
 
     our_aci = load_our_aci(conn)
+    color_defaults = load_chat_color_defaults(conn)
     cid_to_name = {cid: c["title"] for cid, c in convos.items()}
     all_convos = dict(convos)
 
@@ -1778,7 +1852,8 @@ def main() -> int:
                             content=(chat_header(convo, result.count,
                                                  f"../{avatar_src}" if avatar_src else None,
                                                  result.chunks)
-                                     + chat_timeline(result.chunks, months_rel, build)),
+                                     + chat_timeline(result.chunks, months_rel, build,
+                                                     chat_color_css(convo["color"], color_defaults))),
                             scripts=f'<script src="../assets/takeout.js?v={build}"></script>')
             )
             search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)

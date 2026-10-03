@@ -106,6 +106,11 @@ The database itself is opened in SQLCipher **raw key mode**
   in `attachments.noindex/`, encrypted like attachments (older data is plain).
   The contact or group avatar is preferred, as in Signal, then the profile
   picture.
+- `conversationColor`, `customColor` and `customColorId` in the conversation JSON,
+  plus `defaultConversationColor` and `customColors` in the `items` table, give
+  the chat colour. Chat wallpapers are not exported: Signal Desktop has no wallpaper
+  feature, and its own database migration (1410) deletes the wallpaper fields
+  that a backup import may have left behind.
 - `message_attachments`: attachments were moved out of the message JSON in
   schema 1360, so they are read from this table.
 
@@ -124,7 +129,8 @@ delete-for-everyone tombstones. Contact and group pictures show next to names
 in the index, in search results and on each conversation page; conversations
 without a picture get a letter placeholder. In groups, each incoming message
 shows the sender's picture and a name in a colour that stays the same per person. Group updates, timer changes and
-calls become one-line system entries. An edited message shows its current
+calls become one-line system entries. Your own bubbles use the chat colour set in Signal
+(flat, gradient or custom), falling back to the account default. An edited message shows its current
 text and an expandable list of the earlier versions.
 
 ### Attachments
