@@ -17,6 +17,7 @@ This only ever reads your own local Signal installation. Nothing is uploaded.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import binascii
 import contextlib
@@ -31,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zlib
 from collections import Counter, defaultdict
@@ -198,14 +200,42 @@ def load_key(data_dir: Path, args) -> str:
 def open_db(db_path: Path, key: str):
     if not re.fullmatch(r"[0-9a-f]{64}", key):
         sys.exit(f"Key should be 64 hex characters, got {len(key)}")
-    conn = sqlcipher.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        try:
+            return _try_open(db_path, key, "mode=ro")
+        except sqlcipher.OperationalError as error:
+            return _open_read_only_snapshot(db_path, key, error)
+    except sqlcipher.DatabaseError as e:
+        if "not a database" in str(e):
+            sys.exit("Could not decrypt the database - wrong key.")
+        sys.exit(f"Could not open the database: {e}")
+
+
+def _open_read_only_snapshot(db_path: Path, key: str, error):
+    # Read-only WAL needs a -shm file it can create, so read-only snapshots
+    # fail. With an empty WAL, immutable is safe; otherwise use a copy.
+    wal = db_path.with_name(db_path.name + "-wal")
+    if not wal.exists() or wal.stat().st_size == 0:
+        log.info("Cannot open database read-only (%s), opening immutable", error)
+        return _try_open(db_path, key, "immutable=1")
+    tmp = Path(tempfile.mkdtemp(prefix="signal-takeout-"))
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
+    log.info("Cannot open database read-only (%s), copying it to %s", error, tmp)
+    shutil.copy2(db_path, tmp / db_path.name)
+    shutil.copy2(wal, tmp / wal.name)
+    return _try_open(tmp / db_path.name, key, "mode=ro")
+
+
+def _try_open(db_path: Path, key: str, flags: str):
+    conn = sqlcipher.connect(f"file:{db_path}?{flags}", uri=True)
     conn.row_factory = sqlcipher.Row
     # Raw-key mode: no KDF is applied, matching Signal's keyDatabase().
     conn.execute(f"PRAGMA key = \"x'{key}'\"")
     try:
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
     except sqlcipher.DatabaseError:
-        sys.exit("Could not decrypt the database - wrong key.")
+        conn.close()
+        raise
     return conn
 
 

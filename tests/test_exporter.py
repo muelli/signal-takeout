@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import subprocess
@@ -73,6 +74,38 @@ def test_oscrypt_round_trip():
     assert st.oscrypt_decrypt(blob, b"hunter2") == "ab" * 32
     with pytest.raises(ValueError):
         st.oscrypt_decrypt(blob, b"wrong")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the read-only bit")
+@pytest.mark.parametrize("leave_wal", [False, True])
+def test_wal_db_opens_from_read_only_dir(tmp_path, leave_wal):
+    key = "c" * 64
+    db = tmp_path / "db.sqlite"
+    # os._exit skips the close, so the WAL keeps the table uncheckpointed.
+    subprocess.run([sys.executable, "-c", f"""
+import os
+from sqlcipher3 import dbapi2 as s
+c = s.connect({str(db)!r})
+c.execute("PRAGMA key = \\"x'{key}'\\"")
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("PRAGMA wal_autocheckpoint=0")
+c.execute("CREATE TABLE t(x)")
+c.commit()
+if {leave_wal}:
+    os._exit(0)
+c.close()
+"""], check=True)
+    (tmp_path / "db.sqlite-shm").unlink(missing_ok=True)
+    assert (tmp_path / "db.sqlite-wal").exists() == leave_wal
+    tmp_path.chmod(0o555)
+    try:
+        conn = st.open_db(db, key)
+        assert conn.execute("SELECT name FROM sqlite_master").fetchone()[0] == "t"
+        conn.close()
+        with pytest.raises(SystemExit, match="wrong key"):
+            st.open_db(db, "d" * 64)
+    finally:
+        tmp_path.chmod(0o755)
 
 
 def test_chunker_splits_by_month_and_cap(monkeypatch):
