@@ -30,8 +30,7 @@ test("#mN opens the right chunk and highlights the message", async () => {
   assert(d.getElementById("dayfloat").textContent.length > 0);
 
   w.location.hash = "#m3"; await sleep(400);
-  const e3 = d.getElementById("m3");
-  assert(e3.classList.contains("jump") && !e.classList.contains("jump"));
+  assert.deepStrictEqual([...d.querySelectorAll(".msg.jump")].map((x) => x.id), ["m3"]);
 
   d.getElementById("jump").value = "2026-07";
   d.getElementById("jump").dispatchEvent(new w.Event("change")); await sleep(300);
