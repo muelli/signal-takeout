@@ -286,3 +286,31 @@ def test_chats_without_media_have_no_media_page(export):
     out, _ = export
     assert not list(out.glob("chats/Dave*_media.html"))
     assert "_media.html" not in next(out.glob("chats/Dave*.html")).read_text()
+
+
+@pytest.mark.parametrize("text, url", [
+    ("see https://example.com/a.", "https://example.com/a"),
+    ("(at https://en.wikipedia.org/wiki/Foo_(bar))", "https://en.wikipedia.org/wiki/Foo_(bar)"),
+    ("HTTP://Example.com:8080/x?y=1&z=2!", "HTTP://Example.com:8080/x?y=1&z=2"),
+    ("http://[::1]/", "http://[::1]/"),
+    ("https://bücher.de, ok", "https://bücher.de"),
+])
+def test_linkify_finds_urls(text, url):
+    html = st.linkify(text)
+    assert f'<a href="{st.esc(url)}" target="_blank" rel="noopener noreferrer">{st.esc(url)}</a>' in html
+    assert re.sub(r"<[^>]+>", "", html) == st.esc(text)
+
+
+@pytest.mark.parametrize("text", [
+    "https://", "http://:80/", "https://%zz/", "https://a..b/", "http://host:99999/",
+    "ftp://example.com", "javascript:alert(1)", "example.com", "<b>https://\"x</b>",
+])
+def test_linkify_leaves_other_text_alone(text):
+    assert st.linkify(text) == st.esc(text)
+
+
+def test_message_urls_are_links(export):
+    out, _ = export
+    text = next(out.glob("chats/Carol*_months/*.js")).read_text()
+    assert ('<div class=\\"body\\"><a href=\\"https://example.com/a\\" target=\\"_blank\\" '
+            'rel=\\"noopener noreferrer\\">https://example.com/a</a></div>') in text

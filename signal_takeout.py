@@ -40,7 +40,7 @@ from dataclasses import dataclass, field, replace
 from itertools import groupby
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 log = logging.getLogger("signal_takeout")
 
@@ -644,6 +644,7 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
 .msg > .avatar { width:1.75rem; height:1.75rem; margin-right:.4rem;
   align-self:flex-end; font-size:.8rem; }
 .body { white-space:pre-wrap; overflow-wrap:anywhere; }
+.msg.out .bubble a { color:inherit; }
 .time { font-size:.7rem; opacity:.6; margin-top:.25rem; text-align:right; }
 .system { text-align:center; color:var(--muted); font-size:.8rem;
   margin:.6rem 0; font-style:italic; }
@@ -1259,6 +1260,46 @@ def missing_reason(att: dict) -> str:
     return "not downloaded"
 
 
+URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
+HOST_RE = re.compile(r"[\w-]+(\.[\w-]+)*\.?")
+CLOSERS = {")": "(", "]": "[", "}": "{"}
+
+
+def trim_url(url: str) -> str:
+    """Drop trailing punctuation that belongs to the sentence, not the URL."""
+    while url and url[-1] in ".,;:!?'\")]}":
+        opener = CLOSERS.get(url[-1])
+        if opener and url.count(opener) >= url.count(url[-1]):
+            break
+        url = url[:-1]
+    return url
+
+
+def valid_url(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+        parts.port
+    except ValueError:
+        return False
+    host = parts.hostname or ""
+    return ":" in host or bool(HOST_RE.fullmatch(host))
+
+
+def linkify(text) -> str:
+    """Escape text and turn http(s) URLs in it into links."""
+    text = str(text if text is not None else "")
+    out, pos = [], 0
+    for m in URL_RE.finditer(text):
+        url = trim_url(m.group())
+        if not valid_url(url):
+            continue
+        out.append(esc(text[pos:m.start()]))
+        out.append(f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(url)}</a>')
+        pos = m.start() + len(url)
+    out.append(esc(text[pos:]))
+    return "".join(out)
+
+
 def att_href(rel_dir: str, name: str) -> str:
     return esc(f"{rel_dir}/{quote(name)}")
 
@@ -1267,7 +1308,7 @@ def render_attachment(att: dict, rel_dir: str) -> str:
     name = att.get("fileName") or ""
     label = esc(name or att.get("contentType") or "attachment")
     size = human_size(att.get("size"))
-    caption = f'<div class="caption">{esc(att["caption"])}</div>' if att.get("caption") else ""
+    caption = f'<div class="caption">{linkify(att["caption"])}</div>' if att.get("caption") else ""
     if not att.get("_exported"):
         reason = att.get("_error") or "not exported"
         detail = f" ({size})" if size else ""
@@ -1635,7 +1676,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             inner.append('<div class="body deleted">This message was deleted.</div>')
         else:
             if body:
-                inner.append(f'<div class="body">{esc(body)}</div>')
+                inner.append(f'<div class="body">{linkify(body)}</div>')
             for att in by_type["attachment"]:
                 inner.append(render_attachment(att, att_rel_dir))
                 if att.get("_exported"):
@@ -1674,7 +1715,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         if edits and not data.get("deletedForEveryone"):
             versions = "".join(
                 f'<div class="edit"><span class="time">{esc(fmt_time(e.get("timestamp")))}</span> '
-                f'{esc(apply_mentions(e.get("body") or "", e.get("bodyRanges"), name_for_aci))}</div>'
+                f'{linkify(apply_mentions(e.get("body") or "", e.get("bodyRanges"), name_for_aci))}</div>'
                 for e in reversed(edits))
             inner.append(f'<details class="edits"><summary>Edited ({len(edits)} earlier '
                          f'{"version" if len(edits) == 1 else "versions"})</summary>{versions}</details>')

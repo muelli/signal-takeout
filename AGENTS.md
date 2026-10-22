@@ -139,6 +139,10 @@ through `pty.openpty()` from Python instead, set a window size with
   original file with `loading=lazy`, there are no generated thumbnails.
   "in chat" links use `#mN`.
 - Preview URLs are only linked when they start with http:// or https://.
+- `linkify` turns http(s) URLs in bodies, captions and edits into links
+  (trailing punctuation and unbalanced closing brackets are dropped, the host
+  must parse). Find highlights per text node and restores a saved clone, so
+  the links survive a search.
 - tqdm is optional (`progress()` returns the iterable when it is missing) and
   uses `disable=None`, so it is off when stderr is not a tty. The main loop
   runs inside `logging_redirect_tqdm()`.

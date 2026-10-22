@@ -36,3 +36,16 @@ test("find sees long messages, captions and previews", async () => {
   assert.strictEqual(await type(w, d, "example domain"), "1 / 1");
   w.close();
 });
+
+test("find marks inside links and keeps them", async () => {
+  const { w, d } = await openChat("Carol", { layout: true });
+  await sleep(300);
+  assert.strictEqual(await type(w, d, "example.com"), "1 / 1");
+  const a = d.querySelector(".msg.cur .body a");
+  assert(a && a.querySelector("mark"), "link text highlighted");
+  assert.strictEqual(a.textContent, "https://example.com/a");
+  await type(w, d, "");
+  const back = d.querySelector(".body a[href='https://example.com/a']");
+  assert(back && !back.querySelector("mark"));
+  w.close();
+});
