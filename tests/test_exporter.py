@@ -314,3 +314,12 @@ def test_message_urls_are_links(export):
     text = next(out.glob("chats/Carol*_months/*.js")).read_text()
     assert ('<div class=\\"body\\"><a href=\\"https://example.com/a\\" target=\\"_blank\\" '
             'rel=\\"noopener noreferrer\\">https://example.com/a</a></div>') in text
+
+
+def test_media_reserves_its_size(export):
+    out, _ = export
+    alice = "".join(f.read_text() for f in out.glob("chats/Alice*_months/*.js"))
+    carol = "".join(f.read_text() for f in out.glob("chats/Carol*_months/*.js"))
+    assert '<img loading=\\"lazy\\" width=\\"1\\" height=\\"1\\" src=' in alice
+    assert '<video controls preload=\\"none\\" width=\\"640\\" height=\\"360\\" poster=' in carol
+    assert st.dims({"width": 0, "height": 5}) == st.dims({"width": "3", "height": 4}) == ""

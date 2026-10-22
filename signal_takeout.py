@@ -660,7 +660,7 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
   border-radius:999px; font-size:.85rem; line-height:1.5;
   background:rgba(127,127,127,.18); border:1px solid rgba(127,127,127,.35); }
 .rcount { font-size:.75rem; opacity:.8; }
-.att img, .att video { max-width:100%; border-radius:8px; margin-top:.35rem;
+.att img, .att video { max-width:100%; height:auto; border-radius:8px; margin-top:.35rem;
   display:block; }
 .att video { max-height:70vh; }
 .att-file { display:inline-block; margin-top:.35rem; font-size:.85rem; }
@@ -672,7 +672,7 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
 .preview { display:block; margin-top:.35rem; padding:.5rem; border-radius:8px;
   border:1px solid currentColor; color:inherit; text-decoration:none;
   overflow-wrap:anywhere; }
-.preview img { max-width:100%; border-radius:6px; display:block; margin-bottom:.35rem; }
+.preview img { max-width:100%; height:auto; border-radius:6px; display:block; margin-bottom:.35rem; }
 .ptitle { font-weight:600; }
 .pdesc, .purl { font-size:.8rem; opacity:.75; }
 .contact { margin-top:.35rem; }
@@ -1304,6 +1304,14 @@ def att_href(rel_dir: str, name: str) -> str:
     return esc(f"{rel_dir}/{quote(name)}")
 
 
+def dims(att: dict | None) -> str:
+    """width/height attributes, so the browser reserves the box before loading."""
+    w, h = (att or {}).get("width"), (att or {}).get("height")
+    if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
+        return f' width="{w}" height="{h}"'
+    return ""
+
+
 def render_attachment(att: dict, rel_dir: str) -> str:
     name = att.get("fileName") or ""
     label = esc(name or att.get("contentType") or "attachment")
@@ -1318,13 +1326,13 @@ def render_attachment(att: dict, rel_dir: str) -> str:
     ctype = att.get("contentType") or ""
     flags = att.get("flags") or 0
     if ctype.startswith("image/"):
-        media = f'<a href="{href}"><img loading="lazy" src="{href}" alt="{label}"></a>'
+        media = f'<a href="{href}"><img loading="lazy"{dims(att)} src="{href}" alt="{label}"></a>'
     elif ctype.startswith("video/") and flags & GIF:
-        media = f'<video src="{href}" autoplay loop muted playsinline></video>'
+        media = f'<video{dims(att)} src="{href}" autoplay loop muted playsinline></video>'
     elif ctype.startswith("video/"):
         poster = f' poster="{att_href(rel_dir, att["_poster"])}"' if att.get("_poster") else ""
         preload = "none" if poster else "metadata"
-        media = f'<video controls preload="{preload}"{poster} src="{href}"></video>'
+        media = f'<video controls preload="{preload}"{dims(att)}{poster} src="{href}"></video>'
     elif ctype.startswith("audio/"):
         tag = "Voice message" if flags & VOICE_MESSAGE else label
         media = f'<div class="att-label">{tag}</div><audio controls preload="none" src="{href}"></audio>'
@@ -1353,7 +1361,7 @@ def render_quote(quote_data: dict, thumbs: list, author: str, rel_dir: str) -> s
 
 def render_preview(preview: dict, image: dict | None, rel_dir: str) -> str:
     url = preview.get("url") or ""
-    img = (f'<img loading="lazy" alt="" src="{att_href(rel_dir, image["_exported"])}">'
+    img = (f'<img loading="lazy"{dims(image)} alt="" src="{att_href(rel_dir, image["_exported"])}">'
            if image and image.get("_exported") else "")
     title = esc(preview.get("title") or url)
     desc = f'<div class="pdesc">{esc(preview["description"])}</div>' if preview.get("description") else ""
@@ -1367,7 +1375,7 @@ def render_preview(preview: dict, image: dict | None, rel_dir: str) -> str:
 def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
     emoji = esc(sticker.get("emoji") or "")
     if att and att.get("_exported"):
-        return (f'<div class="att"><img class="sticker" loading="lazy" alt="{emoji}" '
+        return (f'<div class="att"><img class="sticker" loading="lazy"{dims(att)} alt="{emoji}" '
                 f'src="{att_href(rel_dir, att["_exported"])}"></div>')
     return f'<div class="missing">[sticker {emoji}]</div>'
 
