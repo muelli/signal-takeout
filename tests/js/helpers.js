@@ -9,7 +9,8 @@ const chats = path.join(root, "chats") + path.sep;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function chatFile(prefix) {
-  return fs.readdirSync(chats).find((f) => f.startsWith(prefix) && f.endsWith(".html"));
+  return fs.readdirSync(chats).find((f) => f.startsWith(prefix) && f.endsWith(".html")
+    && !f.endsWith("_media.html"));
 }
 
 async function openPage(file, { hash = "", layout = false, onError } = {}) {

@@ -141,7 +141,7 @@ def test_export_layout(export):
     assert (out / "assets" / "search-index.js").is_file()
     pages = list((out / "chats").glob("*.html"))
     assert len(pages) >= 4
-    dave = next(p for p in pages if p.name.startswith("Dave"))
+    dave = chat_page(out, "Dave")
     months = sorted(f.stem for f in (out / "chats" / (dave.stem + "_months")).glob("2026-*.js"))
     assert months == ["2026-05", "2026-06", "2026-07", "2026-08"]
 
@@ -157,13 +157,17 @@ def test_limit_keeps_the_newest(tmp_path):
     assert "Dave message 59" in text and "Dave message 54" not in text
 
 
+def chunks_text(out, prefix):
+    return "".join(f.read_text() for f in out.glob(f"chats/{prefix}*_months/*.js")
+                   if f.name != "find.js")
+
+
 def test_group_senders_have_avatar_color_and_reactions_name_people(export):
     out, _ = export
-    chats = out / "chats"
-    group = next(chats.glob("Weekend*_months/*.js")).read_text()
+    group = chunks_text(out, "Weekend")
     assert 'class=\\"author\\" style=\\"--h:' in group
     assert '<img class=\\"avatar\\" src=\\"../assets/avatars/Alice' in group
-    alice = next(chats.glob("Alice*_months/*.js")).read_text()
+    alice = chunks_text(out, "Alice")
     assert 'title=\\"Bob, Toby\\"' in alice
 
 
@@ -230,8 +234,12 @@ def test_second_run_reuses_attachments_and_drops_stale_ones(tmp_path):
     assert "reused from an earlier run" in third
 
 
+def chat_page(out, prefix):
+    return next(p for p in out.glob(f"chats/{prefix}*.html") if not p.name.endswith("_media.html"))
+
+
 def timeline_style(out, prefix):
-    page = next(out.glob(f"chats/{prefix}*.html")).read_text()
+    page = chat_page(out, prefix).read_text()
     return re.search(r'<div id="timeline" style="--out:([^"]*)"', page).group(1)
 
 
@@ -267,7 +275,7 @@ def test_media_page_groups_by_kind_and_links_back_into_the_chat(export):
     assert "beach.mp4" in page and "Quarterly Report" in page
     assert "Voice message" in page and "https://example.com/a" in page
     assert "huge.zip" not in page
-    chat = next(p for p in out.glob("chats/Carol*.html") if not p.name.endswith("_media.html"))
+    chat = chat_page(out, "Carol")
     assert f'href="{chat.name[:-5]}.html#m1"' in page
     assert f'href="{chat.name[:-5]}_media.html">Media (5)</a>' in chat.read_text()
     assert 'id="back" href="' + chat.name in page
@@ -285,7 +293,7 @@ def test_media_page_shows_posters_and_placeholders(export):
 def test_chats_without_media_have_no_media_page(export):
     out, _ = export
     assert not list(out.glob("chats/Dave*_media.html"))
-    assert "_media.html" not in next(out.glob("chats/Dave*.html")).read_text()
+    assert "_media.html" not in chat_page(out, "Dave").read_text()
 
 
 @pytest.mark.parametrize("text, url", [
@@ -311,15 +319,14 @@ def test_linkify_leaves_other_text_alone(text):
 
 def test_message_urls_are_links(export):
     out, _ = export
-    text = next(out.glob("chats/Carol*_months/*.js")).read_text()
+    text = chunks_text(out, "Carol")
     assert ('<div class=\\"body\\"><a href=\\"https://example.com/a\\" target=\\"_blank\\" '
             'rel=\\"noopener noreferrer\\">https://example.com/a</a></div>') in text
 
 
 def test_media_reserves_its_size(export):
     out, _ = export
-    alice = "".join(f.read_text() for f in out.glob("chats/Alice*_months/*.js"))
-    carol = "".join(f.read_text() for f in out.glob("chats/Carol*_months/*.js"))
+    alice, carol = chunks_text(out, "Alice"), chunks_text(out, "Carol")
     assert '<img loading=\\"lazy\\" width=\\"1\\" height=\\"1\\" src=' in alice
     assert '<video controls preload=\\"none\\" width=\\"640\\" height=\\"360\\" poster=' in carol
     assert st.dims({"width": 0, "height": 5}) == st.dims({"width": "3", "height": 4}) == ""
