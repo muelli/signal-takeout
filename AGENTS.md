@@ -90,10 +90,16 @@ through `pty.openpty()` from Python instead, set a window size with
   Each chunk is `<month>.js` calling `window.__chunk(id, html)`; the page holds
   height-estimated `<section class="chunk">` placeholders. `initChat` loads
   sections within about 1.5 screens and unloads beyond 3 (freezing the real
-  height), compensates `scrollBy` when a loaded section is above the viewport
-  (`overflow-anchor:none` on `#timeline`), and `reveal(n)` loads the chunk for
-  entry `n` from its `data-first`/`data-last`. `#mN` navigation, the month
-  select and find all go through `reveal`. Entry numbers are per conversation
+  height), and `reveal(n)` loads the chunk for entry `n` from its
+  `data-first`/`data-last`. `#mN` navigation, the month select and find all
+  go through `reveal`. Scroll anchoring is done in JS, because WebKit has none
+  (`overflow-anchor:none` on `#timeline` keeps other browsers out of it): an
+  anchor element and its document offset are kept, and `settle()` scrolls by
+  however far it moved, after each chunk load and from a `ResizeObserver` on
+  the sections (late images). Jumps hold their target as anchor until wheel,
+  touch, pointer or key input, or until it leaves the screen; otherwise
+  `update()` re-picks the topmost visible entry. Media get `width`/`height`
+  from the attachment row so they reserve space. Entry numbers are per conversation
   and shared with the global search index anchors.
 - `initKeys` binds Ctrl+F and `/` to the find box and Escape to the back link
   (`#back`); Escape first clears a non-empty search.

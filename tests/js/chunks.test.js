@@ -37,3 +37,20 @@ test("#mN opens the right chunk and highlights the message", async () => {
   assert(loaded(d).includes("2026-07"), "month select loads that month");
   w.close();
 });
+
+test("a jump stays put when the month above loads later", async () => {
+  const { w, d } = await openChat("Dave", { layout: true });
+  await sleep(300);
+  const append = d.head.append.bind(d.head);
+  d.head.append = (t) => (/2026-07/.test(t.src) ? setTimeout(() => append(t), 200) : append(t));
+  const n = d.querySelector('.chunk[data-id="2026-08"]').dataset.first;
+  w.location.hash = `#m${n}`; await sleep(100);
+  const e = d.getElementById(`m${n}`);
+  assert(e && !loaded(d).includes("2026-07"));
+  const top = e.getBoundingClientRect().top;
+  assert(top > 0 && top < 800);
+  await sleep(400);
+  assert(loaded(d).includes("2026-07"));
+  assert.strictEqual(e.getBoundingClientRect().top, top);
+  w.close();
+});

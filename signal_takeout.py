@@ -960,7 +960,7 @@ function initFind(chat) {
       if (curEl) curEl.classList.remove("cur");
       curEl = e;
       e.classList.add("cur");
-      e.scrollIntoView({ block: "center" });
+      chat.center(e);
     });
   }
 
@@ -1055,7 +1055,7 @@ function initChat() {
   const secs = [...timeline.children].filter((e) => e.classList.contains("chunk"));
   const bar = pill.parentElement, jump = $("jump");
   const pending = new Map();
-  let queued = false, pinned = null;
+  let queued = false, pinned = null, anchor = null, held = false;
   for (const s of secs) { s._ph = s.firstElementChild; s._label = s._ph.textContent; }
 
   window.__chunk = (id, html) => {
@@ -1076,6 +1076,26 @@ function initChat() {
     });
   }
 
+  const docTop = (e) => e.getBoundingClientRect().top + scrollY;
+  function hold(e, keep) { anchor = { e, y: docTop(e) }; held = keep; }
+  function settle() {
+    if (!anchor || !anchor.e.isConnected) return;
+    const d = docTop(anchor.e) - anchor.y;
+    if (d) scrollBy(0, d);
+    anchor.y = docTop(anchor.e);
+  }
+  function center(e) { e.scrollIntoView({ block: "center" }); hold(e, true); }
+
+  function topmost(s, edge) {
+    const kids = s._loaded ? s.children : [];
+    let lo = 0, hi = kids.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (kids[mid].getBoundingClientRect().bottom <= edge) lo = mid + 1; else hi = mid;
+    }
+    return kids[lo] || s;
+  }
+
   function stuck(s, why) {
     s._ph.textContent = `${s.dataset.label}: ${why} (${s.dataset.src})`;
     console.error(`chunk ${s.dataset.id}: ${why}`);
@@ -1086,13 +1106,11 @@ function initChat() {
     const wait = setTimeout(() => stuck(s, "no response after 15 s"), 15000);
     s._p = fetchChunk(s).then((html) => {
       clearTimeout(wait);
-      const before = s.getBoundingClientRect();
       s.innerHTML = html;
       s.style.height = "";
       s._loaded = true;
       for (const h of hooks) h(s);
-      const after = s.getBoundingClientRect();
-      if (before.bottom <= 0) scrollBy(0, after.height - before.height);
+      settle();
       return s;
     }).catch((err) => {
       clearTimeout(wait);
@@ -1120,6 +1138,11 @@ function initChat() {
       if (r.bottom > -1.5 * vh && r.top < 2.5 * vh) load(s);
       else if (s._loaded && s !== pinned && (r.bottom < -3 * vh || r.top > 4 * vh)) unload(s);
     });
+    if (held) {
+      const r = anchor.e.getBoundingClientRect();
+      if (!anchor.e.isConnected || r.bottom < 0 || r.top > vh) held = false;
+    }
+    if (!held) hold(cur < 0 ? secs[0] : topmost(secs[cur], edge), false);
     pill.hidden = cur < 0;
     if (cur < 0) return;
     const s = secs[cur];
@@ -1142,6 +1165,7 @@ function initChat() {
     if (!s) return Promise.resolve(null);
     pinned = s;
     s.scrollIntoView({ block: "start" });
+    hold(s, true);
     return load(s).then(() => $(`m${n}`));
   }
 
@@ -1152,7 +1176,7 @@ function initChat() {
       if (!e) return;
       for (const x of document.querySelectorAll(".msg.jump")) x.classList.remove("jump");
       e.classList.add("jump");
-      e.scrollIntoView({ block: "center" });
+      center(e);
       schedule();
     });
   }
@@ -1169,6 +1193,13 @@ function initChat() {
                " to use another player."));
   }, true);
 
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => { settle(); schedule(); });
+    for (const s of secs) ro.observe(s);
+  }
+  for (const t of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    addEventListener(t, () => { held = false; }, { passive: true, capture: true });
+  }
   addEventListener("scroll", schedule, { passive: true });
   addEventListener("resize", schedule);
   addEventListener("hashchange", () => goto(location.hash));
@@ -1176,11 +1207,12 @@ function initChat() {
     jump.addEventListener("change", () => {
       const s = secs.find((x) => x.dataset.id === jump.value);
       s.scrollIntoView({ block: "start" });
+      hold(s, true);
       schedule();
     });
   }
   if (/^#m\d+$/.test(location.hash)) goto(location.hash); else update();
-  return { reveal, onLoad: (h) => hooks.push(h) };
+  return { reveal, center, onLoad: (h) => hooks.push(h) };
 }
 
 reportErrors();
