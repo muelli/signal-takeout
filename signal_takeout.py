@@ -927,16 +927,23 @@ function initFind(chat) {
   function markIn(root) {
     if (!toks.length) return;
     for (const e of root.querySelectorAll(MARKED)) {
-      const t = e.textContent, rs = ranges(t, toks);
+      const rs = ranges(e.textContent, toks);
       if (!rs.length) continue;
-      e._t = t;
-      e.replaceChildren(highlight(t, rs));
+      e._c = e.cloneNode(true);
+      const walk = document.createTreeWalker(e, NodeFilter.SHOW_TEXT), texts = [];
+      while (walk.nextNode()) texts.push(walk.currentNode);
+      let off = 0;
+      for (const n of texts) {
+        const t = n.data;
+        n.replaceWith(highlight(t, rs.map(([a, b]) => [a - off, b - off])));
+        off += t.length;
+      }
       marked.push(e);
     }
   }
 
   function clearMarks() {
-    for (const e of marked) if (e.isConnected) e.textContent = e._t;
+    for (const e of marked) if (e.isConnected) e.replaceChildren(...e._c.childNodes);
     marked = [];
     if (curEl) curEl.classList.remove("cur");
     curEl = null;
