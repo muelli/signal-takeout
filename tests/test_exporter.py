@@ -348,3 +348,17 @@ def test_unopened_view_once_media_is_covered(export):
             '</summary><div class=\\"att\\"><a href=') in bob
     assert bob.count("viewonce") == 1
     assert '<div class="tile"><details class="viewonce"><summary>View-once photo' in media_page(out, "Bob")
+
+
+def test_polls_count_each_voter_once(export):
+    out, _ = export
+    group = chunks_text(out, "Weekend")
+    assert ('<div class=\\"poll-q\\">Saturday or Sunday?</div><div class=\\"poll-sub\\">'
+            'Poll &middot; Final results</div>') in group
+    assert ('<li style=\\"--p:33%\\" title=\\"Alice Anderson\\"><span class=\\"popt\\">Saturday'
+            '</span><span class=\\"pcount\\">1</span></li>') in group
+    assert ('<li style=\\"--p:67%\\" title=\\"Bob, Toby\\"><span class=\\"popt\\">Sunday'
+            '</span><span class=\\"pcount\\">2</span></li>') in group
+    assert '<div class=\\"system\\">Alice Anderson ended the poll: Saturday or Sunday?</div>' in group
+    assert st.render_poll({"question": "Q", "options": ["a"], "allowMultiple": True}).count(
+        "Select one or more") == 1

@@ -49,3 +49,11 @@ test("find marks inside links and keeps them", async () => {
   assert(back && !back.querySelector("mark"));
   w.close();
 });
+
+test("find sees poll questions and options", async () => {
+  const { w, d } = await openChat("Weekend", { layout: true });
+  await sleep(300);
+  assert.strictEqual(await type(w, d, "saturday sunday"), "1 / 1");
+  assert(d.querySelector(".msg.cur .poll-q mark") && d.querySelector(".msg.cur .popt mark"));
+  w.close();
+});

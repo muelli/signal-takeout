@@ -181,6 +181,11 @@ through `pty.openpty()` from Python instead, set a window size with
   of the json; `hydrateMessageTableColumns` (`ts/sql/hydration.std.ts`) puts
   them back. The exporter overlays the ones it uses (`JSON_COLUMNS`), and the
   fixture writes them as columns too.
+- Polls are `json.poll` (`question`, `options`, `allowMultiple`, `votes`,
+  `terminatedAt`; `ts/types/Polls.dom.ts`). A voter may appear several times;
+  the vote with the highest `voteCount`, then the newest, counts, and votes
+  with `sendStateByConversationId` are unsent (`ts/state/selectors/message.preload.ts`).
+  Ending a poll adds a `poll-terminate` message with `pollTerminateNotification`.
 - View-once messages keep `isViewOnce`. `eraseMessageContents`
   (`ts/util/cleanup.preload.ts`) wipes body and attachments and sets
   `isErased` when the media is viewed (`readStatus` 2), expires unopened (after

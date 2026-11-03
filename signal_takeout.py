@@ -631,6 +631,14 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
   display:flex; flex-direction:column; justify-content:center; text-align:center;
   background:var(--in); }
 .viewonce[open] > summary { display:none; }
+.poll { min-width:min(16rem, 60vw); }
+.poll-q { font-weight:600; }
+.poll-sub { font-size:.75rem; opacity:.7; margin-bottom:.2rem; }
+.poll-opts { list-style:none; padding:0; margin:0; }
+.poll-opts li { display:flex; justify-content:space-between; gap:.75rem; margin-top:.2rem;
+  padding:.1rem .45rem; border-radius:6px;
+  background:linear-gradient(to right, rgba(127,127,127,.28) var(--p), transparent var(--p)); }
+.pcount { opacity:.8; font-size:.85rem; }
 .rows { list-style:none; padding:0; margin:0; }
 .rows li { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .75rem;
   padding:.5rem 0; border-bottom:1px solid var(--line); }
@@ -917,7 +925,7 @@ function initFind(chat) {
   const input = $("find"), timeline = $("timeline");
   if (!input || !timeline) return;
   const count = $("find-count");
-  const MARKED = ".msg .body:not(.deleted), .msg .caption";
+  const MARKED = ".msg .body:not(.deleted), .msg .caption, .msg .poll-q, .msg .popt";
   let data = null, loading = null, toks = [], matches = [], cur = -1, gen = 0;
   let marked = [], curEl = null;
 
@@ -1443,6 +1451,37 @@ def view_once_note(data: dict, outgoing: bool) -> str:
     return "View-once media, viewed" if data.get("readStatus") == 2 else "View-once media, expired"
 
 
+def render_poll(poll: dict, name_for_cid=None) -> str:
+    options = [str(o) for o in poll.get("options") or []]
+    latest = {}
+    # Each voter counts once: highest voteCount, then newest, as in Signal.
+    for v in poll.get("votes") or []:
+        if not isinstance(v, dict) or v.get("sendStateByConversationId"):
+            continue
+        key = (v.get("voteCount") or 0, v.get("timestamp") or 0)
+        old = latest.get(v.get("fromConversationId"))
+        if old is None or key > (old.get("voteCount") or 0, old.get("timestamp") or 0):
+            latest[v.get("fromConversationId")] = v
+    voters = defaultdict(list)
+    for who, v in latest.items():
+        for i in set(v.get("optionIndexes") or []):
+            if isinstance(i, int) and 0 <= i < len(options):
+                voters[i].append(who)
+    if poll.get("terminatedAt"):
+        sub = "Poll &middot; Final results"
+    else:
+        sub = "Poll &middot; Select " + ("one or more" if poll.get("allowMultiple") else "one")
+    rows = []
+    for i, option in enumerate(options):
+        names = sorted(name_for_cid(c) for c in voters[i]) if name_for_cid else []
+        title = f' title="{esc(", ".join(names))}"' if names else ""
+        pct = round(100 * len(voters[i]) / len(latest)) if latest else 0
+        rows.append(f'<li style="--p:{pct}%"{title}><span class="popt">{esc(option)}</span>'
+                    f'<span class="pcount">{len(voters[i])}</span></li>')
+    return (f'<div class="poll"><div class="poll-q">{esc(poll.get("question") or "")}</div>'
+            f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div>')
+
+
 def render_contact(contact: dict) -> str:
     name = contact.get("name") or {}
     label = (name.get("displayName")
@@ -1706,16 +1745,20 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         sticker = data.get("sticker") if isinstance(data.get("sticker"), dict) else None
         previews = [p for p in data.get("preview") or [] if isinstance(p, dict)]
         contacts = [c for c in data.get("contact") or [] if isinstance(c, dict)]
+        poll = data.get("poll") if isinstance(data.get("poll"), dict) else None
         view_once_gone = bool(data.get("isViewOnce") and data.get("isErased"))
         has_content = bool(
             body or by_type["attachment"] or quote or sticker or contacts
-            or data.get("deletedForEveryone") or view_once_gone
+            or data.get("deletedForEveryone") or view_once_gone or poll
         )
 
         # Anything with no renderable content is either a system event (group
         # update, timer change, call) or nothing worth a bubble.
         if msg_type not in ("incoming", "outgoing") or not has_content:
             text = describe_system(data) or describe_system({"type": msg_type})
+            ended = data.get("pollTerminateNotification")
+            if isinstance(ended, dict):
+                text = f'{name_for_aci(row["sourceServiceId"])} ended the poll: {ended.get("question") or ""}'
             if text:
                 rendered += 1
                 chunker.add(row["sent_at"], f'<div class="system">{esc(text)}</div>', rendered)
@@ -1752,6 +1795,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         else:
             if body:
                 inner.append(f'<div class="body">{linkify(body)}</div>')
+            if poll:
+                inner.append(render_poll(poll, name_for_cid))
             view_once = bool(data.get("isViewOnce"))
             for att in by_type["attachment"]:
                 html = render_attachment(att, att_rel_dir)
@@ -1773,6 +1818,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             inner.extend(render_contact(c) for c in contacts)
             searchable = " ".join(t for t in (
                 [body] + [a.get("caption") for a in by_type["attachment"]]
+                + ([poll.get("question")] + [str(o) for o in poll.get("options") or []] if poll else [])
                 + [p.get("title") for p in previews]) if t)
             if searchable:
                 hits.append((rendered, row["sent_at"] or 0, searchable))
