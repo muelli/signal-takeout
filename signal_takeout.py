@@ -1412,6 +1412,15 @@ def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
     return f'<div class="missing">[sticker {emoji}]</div>'
 
 
+def view_once_note(data: dict, outgoing: bool) -> str:
+    """Signal erases view-once media once viewed, expired, sent or found invalid."""
+    if outgoing:
+        return "View-once media, deleted after sending"
+    if data.get("isTapToViewInvalid"):
+        return "View-once media, could not be shown"
+    return "View-once media, viewed" if data.get("readStatus") == 2 else "View-once media, expired"
+
+
 def render_contact(contact: dict) -> str:
     name = contact.get("name") or {}
     label = (name.get("displayName")
@@ -1674,9 +1683,10 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         sticker = data.get("sticker") if isinstance(data.get("sticker"), dict) else None
         previews = [p for p in data.get("preview") or [] if isinstance(p, dict)]
         contacts = [c for c in data.get("contact") or [] if isinstance(c, dict)]
+        view_once_gone = bool(data.get("isViewOnce") and (row["isErased"] or data.get("isErased")))
         has_content = bool(
             body or by_type["attachment"] or quote or sticker or contacts
-            or data.get("deletedForEveryone")
+            or data.get("deletedForEveryone") or view_once_gone
         )
 
         # Anything with no renderable content is either a system event (group
@@ -1714,6 +1724,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
 
         if data.get("deletedForEveryone"):
             inner.append('<div class="body deleted">This message was deleted.</div>')
+        elif view_once_gone:
+            inner.append(f'<div class="deleted">{view_once_note(data, outgoing)}</div>')
         else:
             if body:
                 inner.append(f'<div class="body">{linkify(body)}</div>')

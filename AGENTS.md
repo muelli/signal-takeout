@@ -177,6 +177,12 @@ through `pty.openpty()` from Python instead, set a window size with
   (`AttachmentDownloads.preload.ts`, `addAttachmentToMessage`), so a
   `long-message` row whose file is missing is normal and not a failure.
 - `flags` is a bit set: 1 voice message, 2 borderless, 8 GIF (`SignalService.proto`).
+- View-once messages keep `isViewOnce`. `eraseMessageContents`
+  (`ts/util/cleanup.preload.ts`) wipes body and attachments and sets
+  `isErased` when the media is viewed (`readStatus` 2), expires unopened (after
+  the message queue time, at least 30 days), was sent by us, or arrived
+  invalid (`isTapToViewInvalid`). Reactions survive. The kind of media is gone
+  with the attachment row.
 - Videos have `screenshotPath`/`screenshotLocalKey`/`screenshotSize` for a
   poster frame. Rows with `path` NULL were never downloaded; `wasTooBig`,
   `isCorrupted`, `pending` and `error` say why.

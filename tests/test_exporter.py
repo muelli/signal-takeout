@@ -330,3 +330,12 @@ def test_media_reserves_its_size(export):
     assert '<img loading=\\"lazy\\" width=\\"1\\" height=\\"1\\" src=' in alice
     assert '<video controls preload=\\"none\\" width=\\"640\\" height=\\"360\\" poster=' in carol
     assert st.dims({"width": 0, "height": 5}) == st.dims({"width": "3", "height": 4}) == ""
+
+
+def test_erased_view_once_media_leaves_a_note(export):
+    out, _ = export
+    bob = chunks_text(out, "Bob")
+    for note in ("viewed", "expired", "deleted after sending", "could not be shown"):
+        assert f'<div class=\\"deleted\\">View-once media, {note}</div>' in bob
+    viewed = bob[bob.index("View-once media, viewed"):bob.index("View-once media, expired")]
+    assert 'class=\\"reaction\\"' in viewed

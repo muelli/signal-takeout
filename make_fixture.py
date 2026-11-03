@@ -164,6 +164,16 @@ def main() -> None:
          {"bodyRanges": [{"start": 0, "length": 1, "mentionAci": ALICE}]}),
         ("m8", "conv-group", "outgoing", None, now - 3600_000, "Sounds good to me", {}),
         ("m8b", "conv-group", "incoming", ALICE, now - 3000_000, "Count me in", {}),
+        # View-once media as Signal leaves it: erased once viewed, expired or sent.
+        ("v2", "conv-bob", "incoming", BOB, now - 3_000_000, None,
+         {"isViewOnce": True, "isErased": True, "readStatus": 2,
+          "reactions": [{"emoji": "\U0001F602", "fromId": "conv-bob", "timestamp": now}]}),
+        ("v3", "conv-bob", "incoming", BOB, now - 2_900_000, None,
+         {"isViewOnce": True, "isErased": True, "readStatus": 0}),
+        ("v4", "conv-bob", "outgoing", None, now - 2_800_000, None,
+         {"isViewOnce": True, "isErased": True}),
+        ("v5", "conv-bob", "incoming", BOB, now - 2_700_000, None,
+         {"isViewOnce": True, "isErased": True, "isTapToViewInvalid": True}),
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         ("m11", "conv-group", "incoming", BOB, now - 1200_000, "Treffen im Caf\u00e9 bei Zo\u00eb?", {}),
         ("m10", "conv-bob", "incoming", BOB, now - 300_000, "Did you see what Alice said about Friday?", {}),
@@ -203,8 +213,9 @@ def main() -> None:
             payload["body"] = body
         db.execute(
             "INSERT INTO messages (id, json, body, conversationId, sent_at,"
-            " received_at, type, sourceServiceId, isErased) VALUES (?,?,?,?,?,?,?,?,0)",
-            (mid, json.dumps(payload), body, cid, sent, sent, mtype, src),
+            " received_at, type, sourceServiceId, isErased) VALUES (?,?,?,?,?,?,?,?,?)",
+            (mid, json.dumps(payload), body, cid, sent, sent, mtype, src,
+             int(bool(extra.get("isErased")))),
         )
 
     db.execute(
