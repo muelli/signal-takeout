@@ -77,7 +77,8 @@ def main() -> None:
           active_at INTEGER, type TEXT, members TEXT, name TEXT, profileName TEXT);
         CREATE TABLE messages (id TEXT PRIMARY KEY, json TEXT, body TEXT,
           conversationId TEXT, sent_at INTEGER, received_at INTEGER,
-          type TEXT, sourceServiceId TEXT, isErased INTEGER);
+          type TEXT, sourceServiceId TEXT, isErased INTEGER, isViewOnce INTEGER,
+          readStatus INTEGER);
         CREATE TABLE items (id TEXT PRIMARY KEY, json TEXT);
         CREATE TABLE message_attachments (messageId TEXT, editHistoryIndex INTEGER,
           attachmentType TEXT, orderInMessage INTEGER, size INTEGER,
@@ -209,14 +210,15 @@ def main() -> None:
         rows.append((f"d{i}", "conv-dave", "outgoing" if out else "incoming",
                      None if out else DAVE, now - (150 - 2 * i) * day + i * 1000, body, {}))
     for mid, cid, mtype, src, sent, body, extra in rows:
+        # Like Signal's saveMessage, these go to columns and not into the json.
+        columns = [extra.pop(c, None) for c in ("isErased", "isViewOnce", "readStatus")]
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
         if body is not None:
             payload["body"] = body
         db.execute(
-            "INSERT INTO messages (id, json, body, conversationId, sent_at,"
-            " received_at, type, sourceServiceId, isErased) VALUES (?,?,?,?,?,?,?,?,?)",
-            (mid, json.dumps(payload), body, cid, sent, sent, mtype, src,
-             int(bool(extra.get("isErased")))),
+            "INSERT INTO messages (id, json, body, conversationId, sent_at, received_at, type,"
+            " sourceServiceId, isErased, isViewOnce, readStatus) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (mid, json.dumps(payload), body, cid, sent, sent, mtype, src, *columns),
         )
 
     db.execute(

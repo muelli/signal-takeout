@@ -551,11 +551,17 @@ def count_messages(conn, conversation_id: str, window: Window = Window()) -> int
                         [conversation_id, *params]).fetchone()[0]
 
 
+# Signal keeps these in columns and leaves them out of the json.
+JSON_COLUMNS = ("isErased", "isViewOnce", "readStatus")
+
+
 def load_messages(conn, conversation_id: str, window: Window = Window()):
     clause, params = window.sql()
+    have = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    extra = "".join(f", {c}" for c in JSON_COLUMNS if c in have)
     return conn.execute(
         f"""
-        SELECT id, json, body, type, sent_at, received_at, sourceServiceId, isErased
+        SELECT id, json, body, type, sent_at, received_at, sourceServiceId{extra}
         FROM messages
         WHERE conversationId = ? AND {clause}
         ORDER BY received_at ASC, sent_at ASC
@@ -1686,6 +1692,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             data = json.loads(row["json"] or "{}")
         except json.JSONDecodeError:
             data = {}
+        data.update({c: row[c] for c in JSON_COLUMNS if c in row.keys() and row[c] is not None})
 
         msg_type = row["type"]
         body = "" if data.get("deletedForEveryone") else apply_mentions(
@@ -1699,7 +1706,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         sticker = data.get("sticker") if isinstance(data.get("sticker"), dict) else None
         previews = [p for p in data.get("preview") or [] if isinstance(p, dict)]
         contacts = [c for c in data.get("contact") or [] if isinstance(c, dict)]
-        view_once_gone = bool(data.get("isViewOnce") and (row["isErased"] or data.get("isErased")))
+        view_once_gone = bool(data.get("isViewOnce") and data.get("isErased"))
         has_content = bool(
             body or by_type["attachment"] or quote or sticker or contacts
             or data.get("deletedForEveryone") or view_once_gone

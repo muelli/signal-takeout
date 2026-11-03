@@ -177,6 +177,10 @@ through `pty.openpty()` from Python instead, set a window size with
   (`AttachmentDownloads.preload.ts`, `addAttachmentToMessage`), so a
   `long-message` row whose file is missing is normal and not a failure.
 - `flags` is a bit set: 1 voice message, 2 borderless, 8 GIF (`SignalService.proto`).
+- `saveMessage` stores some message fields only in columns and leaves them out
+  of the json; `hydrateMessageTableColumns` (`ts/sql/hydration.std.ts`) puts
+  them back. The exporter overlays the ones it uses (`JSON_COLUMNS`), and the
+  fixture writes them as columns too.
 - View-once messages keep `isViewOnce`. `eraseMessageContents`
   (`ts/util/cleanup.preload.ts`) wipes body and attachments and sets
   `isErased` when the media is viewed (`readStatus` 2), expires unopened (after
