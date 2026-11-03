@@ -616,6 +616,15 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
   background:rgba(0,0,0,.65); color:#fff; font-size:.7rem; text-decoration:none;
   opacity:0; }
 .tile:hover .goto, .goto:focus-visible { opacity:1; }
+.viewonce > summary { display:block; list-style:none; cursor:pointer; margin-top:.35rem;
+  padding:.6rem .9rem; border:1px dashed currentColor; border-radius:8px; font-weight:600; }
+.viewonce > summary::-webkit-details-marker { display:none; }
+.viewonce > summary span { display:block; font-weight:400; font-size:.8rem; opacity:.7; }
+.tile > .viewonce { height:100%; }
+.tile .viewonce > summary { position:absolute; inset:0; margin:0; border:0; border-radius:0;
+  display:flex; flex-direction:column; justify-content:center; text-align:center;
+  background:var(--in); }
+.viewonce[open] > summary { display:none; }
 .rows { list-style:none; padding:0; margin:0; }
 .rows li { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .75rem;
   padding:.5rem 0; border-bottom:1px solid var(--line); }
@@ -1412,6 +1421,13 @@ def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
     return f'<div class="missing">[sticker {emoji}]</div>'
 
 
+def view_once_cover(html: str, ctype: str) -> str:
+    """Hide unopened view-once media behind a click, as Signal does."""
+    kind = "photo" if ctype.startswith("image/") else "video" if ctype.startswith("video/") else "media"
+    return (f'<details class="viewonce"><summary>View-once {kind}<span>click to show</span>'
+            f'</summary>{html}</details>')
+
+
 def view_once_note(data: dict, outgoing: bool) -> str:
     """Signal erases view-once media once viewed, expired, sent or found invalid."""
     if outgoing:
@@ -1729,13 +1745,15 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         else:
             if body:
                 inner.append(f'<div class="body">{linkify(body)}</div>')
+            view_once = bool(data.get("isViewOnce"))
             for att in by_type["attachment"]:
-                inner.append(render_attachment(att, att_rel_dir))
+                html = render_attachment(att, att_rel_dir)
+                inner.append(view_once_cover(html, att.get("contentType") or "") if view_once else html)
                 if att.get("_exported"):
                     media.append({"n": rendered, "ts": row["sent_at"], "name": att["_exported"],
                                   "poster": att.get("_poster"), "type": att.get("contentType") or "",
                                   "label": att.get("fileName") or "", "size": att.get("size"),
-                                  "flags": att.get("flags") or 0})
+                                  "flags": att.get("flags") or 0, "view_once": view_once})
             if sticker:
                 inner.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
                                             att_rel_dir))
@@ -1828,8 +1846,10 @@ def media_tile(item: dict, rel_dir: str, chat_href: str) -> str:
                  f'alt="{label}"><span class="play">&#9654;</span>')
     else:
         thumb = f'<span class="novideo">{label}</span><span class="play">&#9654;</span>'
-    return (f'<div class="tile"><a class="thumb" href="{href}">{thumb}</a>'
-            f'{media_goto(chat_href, item["n"])}</div>')
+    thumb = f'<a class="thumb" href="{href}">{thumb}</a>'
+    if item.get("view_once"):
+        thumb = view_once_cover(thumb, item["type"])
+    return f'<div class="tile">{thumb}{media_goto(chat_href, item["n"])}</div>'
 
 
 def media_row(item: dict, rel_dir: str, chat_href: str) -> str:

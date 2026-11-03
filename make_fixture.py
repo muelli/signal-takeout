@@ -164,7 +164,8 @@ def main() -> None:
          {"bodyRanges": [{"start": 0, "length": 1, "mentionAci": ALICE}]}),
         ("m8", "conv-group", "outgoing", None, now - 3600_000, "Sounds good to me", {}),
         ("m8b", "conv-group", "incoming", ALICE, now - 3000_000, "Count me in", {}),
-        # View-once media as Signal leaves it: erased once viewed, expired or sent.
+        # View-once media: one unopened, then as Signal leaves it once viewed, expired or sent.
+        ("v1", "conv-bob", "incoming", BOB, now - 3_100_000, None, {"isViewOnce": True}),
         ("v2", "conv-bob", "incoming", BOB, now - 3_000_000, None,
          {"isViewOnce": True, "isErased": True, "readStatus": 2,
           "reactions": [{"emoji": "\U0001F602", "fromId": "conv-bob", "timestamp": now}]}),
@@ -240,6 +241,7 @@ def main() -> None:
     attach("m20", "preview", 0, "image/png", None, png)
     attach("m21", "sticker", 0, "image/png", None, png)
     attach("m22", "contact", 0, "image/png", None, png)
+    attach("v1", "attachment", 0, "image/jpeg", None, png, width=1, height=1)
 
     db.commit()
     db.close()

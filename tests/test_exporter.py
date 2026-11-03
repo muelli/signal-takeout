@@ -339,3 +339,12 @@ def test_erased_view_once_media_leaves_a_note(export):
         assert f'<div class=\\"deleted\\">View-once media, {note}</div>' in bob
     viewed = bob[bob.index("View-once media, viewed"):bob.index("View-once media, expired")]
     assert 'class=\\"reaction\\"' in viewed
+
+
+def test_unopened_view_once_media_is_covered(export):
+    out, _ = export
+    bob = chunks_text(out, "Bob")
+    assert ('<details class=\\"viewonce\\"><summary>View-once photo<span>click to show</span>'
+            '</summary><div class=\\"att\\"><a href=') in bob
+    assert bob.count("viewonce") == 1
+    assert '<div class="tile"><details class="viewonce"><summary>View-once photo' in media_page(out, "Bob")
