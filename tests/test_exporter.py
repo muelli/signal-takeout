@@ -344,10 +344,14 @@ def test_erased_view_once_media_leaves_a_note(export):
 def test_unopened_view_once_media_is_covered(export):
     out, _ = export
     bob = chunks_text(out, "Bob")
-    assert ('<details class=\\"viewonce\\"><summary>View-once photo<span>click to show</span>'
-            '</summary><div class=\\"att\\"><a href=') in bob
-    assert bob.count("viewonce") == 1
-    assert '<div class="tile"><details class="viewonce"><summary>View-once photo' in media_page(out, "Bob")
+    cover = re.search(r'<div class=\\"viewonce\\"><input type=\\"checkbox\\" class=\\"vo-seen\\" '
+                      r'id=\\"(vo[0-9a-f]{8})\\"><div class=\\"att\\"><a href=.*?</div>'
+                      r'<label class=\\"vo-cover\\" for=\\"\1\\">View-once photo'
+                      r'<span>click to show</span></label></div>', bob)
+    assert cover and bob.count('class=\\"viewonce\\"') == 1
+    assert re.search(r'<div class="tile"><div class="viewonce"><input type="checkbox" class="vo-seen" '
+                     r'id="(vo[0-9a-f]{8})"><a class="thumb".*?<label class="vo-cover" for="\1">',
+                     media_page(out, "Bob"))
 
 
 def test_polls_count_each_voter_once(export):

@@ -622,15 +622,18 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
   background:rgba(0,0,0,.65); color:#fff; font-size:.7rem; text-decoration:none;
   opacity:0; }
 .tile:hover .goto, .goto:focus-visible { opacity:1; }
-.viewonce > summary { display:block; list-style:none; cursor:pointer; margin-top:.35rem;
-  padding:.6rem .9rem; border:1px dashed currentColor; border-radius:8px; font-weight:600; }
-.viewonce > summary::-webkit-details-marker { display:none; }
-.viewonce > summary span { display:block; font-weight:400; font-size:.8rem; opacity:.7; }
-.tile > .viewonce { height:100%; }
-.tile .viewonce > summary { position:absolute; inset:0; margin:0; border:0; border-radius:0;
-  display:flex; flex-direction:column; justify-content:center; text-align:center;
-  background:var(--in); }
-.viewonce[open] > summary { display:none; }
+.viewonce { position:relative; overflow:hidden; border-radius:8px; margin-top:.35rem;
+  min-width:9rem; min-height:5rem; }
+.viewonce .att img, .viewonce .att video { margin-top:0; }
+.vo-seen { position:absolute; opacity:0; pointer-events:none; }
+.vo-seen:not(:checked) ~ :not(.vo-cover) { filter:blur(1.5rem); }
+.vo-cover { position:absolute; inset:0; z-index:1; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; text-align:center; cursor:pointer;
+  font-weight:600; color:#fff; background:rgba(0,0,0,.35); text-shadow:0 1px 3px #000; }
+.vo-cover span { font-weight:400; font-size:.8rem; }
+.vo-seen:focus-visible ~ .vo-cover { outline:2px solid; outline-offset:-4px; }
+.vo-seen:checked ~ .vo-cover { display:none; }
+.tile > .viewonce { height:100%; margin:0; border-radius:0; min-width:0; min-height:0; }
 .poll { min-width:min(16rem, 60vw); }
 .poll-q { font-weight:600; }
 .poll-sub { font-size:.75rem; opacity:.7; margin-bottom:.2rem; }
@@ -1435,11 +1438,13 @@ def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
     return f'<div class="missing">[sticker {emoji}]</div>'
 
 
-def view_once_cover(html: str, ctype: str) -> str:
-    """Hide unopened view-once media behind a click, as Signal does."""
+def view_once_cover(html: str, ctype: str, key: str) -> str:
+    """Blur unopened view-once media under a cover that a click removes, without JS."""
     kind = "photo" if ctype.startswith("image/") else "video" if ctype.startswith("video/") else "media"
-    return (f'<details class="viewonce"><summary>View-once {kind}<span>click to show</span>'
-            f'</summary>{html}</details>')
+    vid = f"vo{zlib.crc32(key.encode()):08x}"
+    return (f'<div class="viewonce"><input type="checkbox" class="vo-seen" id="{vid}">{html}'
+            f'<label class="vo-cover" for="{vid}">View-once {kind}<span>click to show</span>'
+            f'</label></div>')
 
 
 # DataMessage.ProtocolVersion in Signal's SignalService.proto
@@ -1817,9 +1822,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             if poll:
                 inner.append(render_poll(poll, name_for_cid))
             view_once = bool(data.get("isViewOnce"))
-            for att in by_type["attachment"]:
+            for i, att in enumerate(by_type["attachment"]):
                 html = render_attachment(att, att_rel_dir)
-                inner.append(view_once_cover(html, att.get("contentType") or "") if view_once else html)
+                if view_once:
+                    html = view_once_cover(html, att.get("contentType") or "", f"{rendered}/{i}")
+                inner.append(html)
                 if att.get("_exported"):
                     media.append({"n": rendered, "ts": row["sent_at"], "name": att["_exported"],
                                   "poster": att.get("_poster"), "type": att.get("contentType") or "",
@@ -1920,7 +1927,7 @@ def media_tile(item: dict, rel_dir: str, chat_href: str) -> str:
         thumb = f'<span class="novideo">{label}</span><span class="play">&#9654;</span>'
     thumb = f'<a class="thumb" href="{href}">{thumb}</a>'
     if item.get("view_once"):
-        thumb = view_once_cover(thumb, item["type"])
+        thumb = view_once_cover(thumb, item["type"], f'{item["n"]}/{item["name"]}')
     return f'<div class="tile">{thumb}{media_goto(chat_href, item["n"])}</div>'
 
 
