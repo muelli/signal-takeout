@@ -196,6 +196,16 @@ through `pty.openpty()` from Python instead, set a window size with
   content can be recovered from the db: Signal's SQLCipher 4.18 build has
   `SQLITE_SECURE_DELETE`, FTS5 `secure-delete` is on (migration 950), and the
   WAL is truncated after deletes.
+- Stories are `type = 'story'` rows filed under the poster's direct chat, the
+  group, or our own conversation (`sendStoryMessage`). They expire after a day
+  and are then deleted with their files, but only while Signal runs, so an
+  export after Signal was closed for a while still has them. Replies carry
+  `storyId` (a column) and `storyReplyContext.authorAci`; a reaction is a reply
+  with `storyReaction` and no body. 1:1 replies stay forever; group replies are
+  deleted with their story (`cleanupStoryReplies`) and Signal shows them only
+  in the story's thread. Text stories keep their content in
+  `message_attachments.storyTextAttachmentJson`, colours as ARGB ints
+  (`ts/util/getStoryBackground.std.ts`).
 - View-once messages keep `isViewOnce`. `eraseMessageContents`
   (`ts/util/cleanup.preload.ts`) wipes body and attachments and sets
   `isErased` when the media is viewed (`readStatus` 2), expires unopened (after
@@ -226,6 +236,6 @@ fixture. If the user reports a real-data problem, start with `-vv` output.
 - Attachment failures are logged as warnings with reason, file and message id,
   and summarized at the end. `file missing on disk` (Signal purged the file) is
   the likely common one; `MAC mismatch` means corrupt data or a wrong key.
-- Contact avatars on shared contact cards and story attachments are not
-  rendered. Edit history is read from `editHistory` in the message JSON (newest
+- Contact avatars on shared contact cards are not rendered. Text stories need
+  the attachment rows, so `--no-attachments` shows them as plain "Story". Edit history is read from `editHistory` in the message JSON (newest
   first, entry 0 is the current text); old versions are not searchable.

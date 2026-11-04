@@ -78,7 +78,7 @@ def main() -> None:
         CREATE TABLE messages (id TEXT PRIMARY KEY, json TEXT, body TEXT,
           conversationId TEXT, sent_at INTEGER, received_at INTEGER,
           type TEXT, sourceServiceId TEXT, isErased INTEGER, isViewOnce INTEGER,
-          readStatus INTEGER);
+          readStatus INTEGER, storyId TEXT);
         CREATE TABLE items (id TEXT PRIMARY KEY, json TEXT);
         CREATE TABLE message_attachments (messageId TEXT, editHistoryIndex INTEGER,
           attachmentType TEXT, orderInMessage INTEGER, size INTEGER,
@@ -86,7 +86,7 @@ def main() -> None:
           width INTEGER, height INTEGER, caption TEXT, flags INTEGER,
           screenshotPath TEXT, screenshotLocalKey TEXT, screenshotSize INTEGER,
           screenshotContentType TEXT, wasTooBig INTEGER, pending INTEGER,
-          error INTEGER, isCorrupted INTEGER);
+          error INTEGER, isCorrupted INTEGER, storyTextAttachmentJson TEXT);
         """
     )
 
@@ -180,6 +180,27 @@ def main() -> None:
         ("u1", "conv-bob", "incoming", BOB, now - 2_600_000, None,
          {"isErased": True, "requiredProtocolVersion": 8}),
         ("u2", "conv-bob", "incoming", BOB, now - 2_500_000, None, {"isErased": True}),
+        # Alice's photo story, still here because Signal was closed when it expired.
+        ("s1", "conv-alice", "story", ALICE, now - 40 * 3600_000, None, {}),
+        ("s1r", "conv-alice", "outgoing", None, now - 39 * 3600_000, "Gorgeous!",
+         {"storyId": "s1", "storyReplyContext": {"authorAci": ALICE}}),
+        ("s1e", "conv-alice", "outgoing", None, now - 39 * 3600_000 + 60_000, None,
+         {"storyId": "s1", "storyReplyContext": {"authorAci": ALICE},
+          "storyReaction": {"emoji": "\U0001F60D", "targetAuthorAci": ALICE,
+                            "targetTimestamp": now - 40 * 3600_000}}),
+        # A reply to one of our stories that has long been deleted.
+        ("s0r", "conv-alice", "incoming", ALICE, now - 38 * 3600_000, "Love your story!",
+         {"storyId": "s-gone", "storyReplyContext": {"authorAci": ME}}),
+        # Bob's text story in the group; its replies belong to the story, not the chat.
+        ("gs", "conv-group", "story", BOB, now - 1_800_000, None, {}),
+        ("gsr1", "conv-group", "incoming", ALICE, now - 1_750_000, "Haha, so true",
+         {"storyId": "gs", "storyReplyContext": {"authorAci": BOB}}),
+        ("gsr2", "conv-group", "incoming", TOBY, now - 1_700_000, None,
+         {"storyId": "gs", "storyReplyContext": {"authorAci": BOB},
+          "storyReaction": {"emoji": "\U0001F525", "targetAuthorAci": BOB,
+                            "targetTimestamp": now - 1_800_000}}),
+        ("gsr3", "conv-group", "outgoing", None, now - 1_650_000, "Me too",
+         {"storyId": "gs", "storyReplyContext": {"authorAci": BOB}}),
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         # Bob changed his vote; Alice's second vote was never sent, so it does not count.
         ("m8p", "conv-group", "incoming", ALICE, now - 2500_000, None,
@@ -233,13 +254,14 @@ def main() -> None:
                      None if out else DAVE, now - (150 - 2 * i) * day + i * 1000, body, {}))
     for mid, cid, mtype, src, sent, body, extra in rows:
         # Like Signal's saveMessage, these go to columns and not into the json.
-        columns = [extra.pop(c, None) for c in ("isErased", "isViewOnce", "readStatus")]
+        columns = [extra.pop(c, None) for c in ("isErased", "isViewOnce", "readStatus", "storyId")]
         payload = {"type": mtype, "sent_at": sent, "conversationId": cid, **extra}
         if body is not None:
             payload["body"] = body
         db.execute(
             "INSERT INTO messages (id, json, body, conversationId, sent_at, received_at, type,"
-            " sourceServiceId, isErased, isViewOnce, readStatus) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " sourceServiceId, isErased, isViewOnce, readStatus, storyId)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (mid, json.dumps(payload), body, cid, sent, sent, mtype, src, *columns),
         )
 
@@ -266,6 +288,13 @@ def main() -> None:
     attach("m21", "sticker", 0, "image/png", None, png)
     attach("m22", "contact", 0, "image/png", None, png)
     attach("v1", "attachment", 0, "image/jpeg", None, png, width=1, height=1)
+    attach("s1", "attachment", 0, "image/png", None, png, width=1, height=1,
+           caption="Sunset at the lake")
+    attach("gs", "attachment", 0, "text/x-signal-story", None, None,
+           storyTextAttachmentJson=json.dumps({
+               "text": "Mondays.", "textStyle": 3, "textForegroundColor": 0xFFFFFFFF,
+               "gradient": {"angle": 180, "colors": [0xFF5B6BEF, 0xFFEE5B8E],
+                            "positions": [0, 1]}}))
 
     db.commit()
     db.close()

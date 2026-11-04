@@ -381,3 +381,38 @@ def test_unsupported_messages_say_what_they_needed(export):
     assert '<div class=\\"deleted\\">Unsupported message, it needs a newer Signal (polls)</div>' in bob
     assert '<div class=\\"deleted\\">Unsupported message</div>' in bob
     assert st.unsupported_note({"requiredProtocolVersion": 42}).endswith("(protocol version 42)")
+
+
+def test_stories_show_with_their_replies(export):
+    out, _ = export
+    alice = chunks_text(out, "Alice")
+    story = re.search(r'<div class=\\"msg story\\" id=\\"m(\d+)\\"><div class=\\"bubble\\">'
+                      r'<div class=\\"story-tag\\">Story</div><div class=\\"att\\">.*?'
+                      r'<div class=\\"caption\\">Sunset at the lake</div>', alice)
+    assert story
+    link = f'<a href=\\"#m{story.group(1)}\\">Photo</a>'
+    assert f"<b>Replied to Alice Anderson&#x27;s story</b><br>{link}</div>" in alice
+    assert f"<b>Reacted \U0001F60D to Alice Anderson&#x27;s story</b><br>{link}</div>" in alice
+    assert ('<b>Replied to your story</b><br><span class=\\"deleted\\">No longer available</span>'
+            in alice)
+    assert '<span class="tile-tag">Story</span>' in media_page(out, "Alice")
+
+
+def test_group_story_replies_live_in_the_story_thread(export):
+    out, _ = export
+    group = chunks_text(out, "Weekend")
+    assert ('<div class=\\"text-story ts3\\" style=\\"background:linear-gradient(180deg, '
+            '#5b6bef 0%, #ee5b8e 100%)\\"><span style=\\"color:#ffffff\\">Mondays.</span></div>'
+            '<details class=\\"story-replies\\"><summary>3 replies</summary>') in group
+    assert "<b>Toby</b> reacted \U0001F525" in group and "<b>You</b> Me too" in group
+    thread = group[group.index("story-replies"):]
+    thread = thread[:thread.index("</details>")]
+    assert "Haha, so true" in thread and group.count("Haha, so true") == 1
+
+
+def test_story_backgrounds_follow_signal():
+    assert st.story_background({}) == "#fbfbfb"
+    assert st.story_background({"color": 0xFF112233}) == "#112233"
+    assert st.story_background({"gradient": {"angle": 90, "startColor": 0xFF000000,
+                                             "endColor": 0xFFFFFFFF}}) == (
+        "linear-gradient(90deg, #000000, #ffffff)")

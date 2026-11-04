@@ -473,12 +473,14 @@ def load_attachments(conn) -> dict:
     if not table_exists(conn, "message_attachments"):
         return {}
     by_message = defaultdict(list)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(message_attachments)")}
+    text_story = ", storyTextAttachmentJson" if "storyTextAttachmentJson" in have else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT messageId, attachmentType, orderInMessage, size, contentType,
                path, localKey, fileName, width, height, caption, flags,
                screenshotPath, screenshotLocalKey, screenshotSize,
-               screenshotContentType, wasTooBig, pending, error, isCorrupted
+               screenshotContentType, wasTooBig, pending, error, isCorrupted{text_story}
         FROM message_attachments
         WHERE attachmentType IN ('attachment', 'long-message', 'quote', 'preview', 'sticker')
           AND editHistoryIndex = -1
@@ -552,7 +554,7 @@ def count_messages(conn, conversation_id: str, window: Window = Window()) -> int
 
 
 # Signal keeps these in columns and leaves them out of the json.
-JSON_COLUMNS = ("isErased", "isViewOnce", "readStatus")
+JSON_COLUMNS = ("isErased", "isViewOnce", "readStatus", "storyId")
 
 
 def load_messages(conn, conversation_id: str, window: Window = Window()):
@@ -656,6 +658,23 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
   padding:.1rem .45rem; border-radius:6px;
   background:linear-gradient(to right, rgba(127,127,127,.28) var(--p), transparent var(--p)); }
 .pcount { opacity:.8; font-size:.85rem; }
+.story-tag { font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; opacity:.7; }
+.text-story { display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:.5rem; width:min(14rem, 60vw); aspect-ratio:9/16; margin-top:.35rem; padding:1rem;
+  border-radius:10px; text-align:center; font-size:1.15rem; overflow-wrap:anywhere; }
+.text-story > span { padding:.1rem .35rem; border-radius:4px; white-space:pre-wrap; }
+.text-story .purl { color:#fff; }
+.ts2 { font-weight:700; }
+.ts3 { font-family:Georgia, serif; }
+.ts4 { font-family:cursive; }
+.ts5 { font-family:"Arial Narrow", sans-serif; font-stretch:condensed; }
+.story-replies { margin-top:.4rem; font-size:.85rem; }
+.story-replies summary { cursor:pointer; }
+.sreply { margin-top:.25rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.sreply .time { display:inline; margin:0 0 0 .4rem; }
+.story-quote a { color:inherit; }
+.tile-tag { position:absolute; left:.25rem; top:.25rem; z-index:2; padding:0 .4rem;
+  border-radius:6px; background:rgba(0,0,0,.65); color:#fff; font-size:.7rem; }
 .rows { list-style:none; padding:0; margin:0; }
 .rows li { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .75rem;
   padding:.5rem 0; border-bottom:1px solid var(--line); }
@@ -1528,6 +1547,118 @@ def render_poll(poll: dict, name_for_cid=None, key: str = "") -> str:
             f'<ul class="poll-who">{"".join(who)}</ul></div></div>')
 
 
+def argb_hex(color, default: int = 0xFFFBFBFB) -> str:
+    """Signal stores colours as ARGB ints and drops the alpha."""
+    return f"#{(color if isinstance(color, int) and color else default) & 0xFFFFFF:06x}"
+
+
+def story_background(t: dict) -> str:
+    """Port of getBackgroundColor in Signal's ts/util/getStoryBackground.std.ts."""
+    g = t.get("gradient") if isinstance(t.get("gradient"), dict) else None
+    if g:
+        angle = g.get("angle") or 0
+        colors, positions = g.get("colors") or [], g.get("positions") or []
+        if colors and len(colors) == len(positions):
+            steps = [f"{argb_hex(c)} {(p if p is not None else 1) * 100:g}%"
+                     for c, p in zip(colors, positions)]
+        else:
+            steps = [argb_hex(g.get("startColor")), argb_hex(g.get("endColor"))]
+        return f"linear-gradient({angle}deg, {', '.join(steps)})"
+    return argb_hex(t.get("color"))
+
+
+def text_story_data(att: dict) -> dict:
+    try:
+        t = json.loads(att.get("storyTextAttachmentJson") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return t if isinstance(t, dict) else {}
+
+
+def render_text_story(att: dict) -> str:
+    t = text_story_data(att)
+    style = t.get("textStyle") if t.get("textStyle") in (2, 3, 4, 5) else 1
+    box = f";background:{argb_hex(t['textBackgroundColor'])}" if t.get("textBackgroundColor") else ""
+    text = (f'<span style="color:{argb_hex(t.get("textForegroundColor"))}{box}">'
+            f'{linkify(t.get("text") or "")}</span>' if t.get("text") else "")
+    url = (t.get("preview") or {}).get("url") if isinstance(t.get("preview"), dict) else None
+    link = (f'<a class="purl" href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(url)}</a>'
+            if url and url.startswith(("http://", "https://")) else "")
+    return (f'<div class="text-story ts{style}" style="background:{esc(story_background(t))}">'
+            f'{text}{link}</div>')
+
+
+def story_label(atts: list) -> str:
+    """One-line stand-in for a story, as in a reply's quote."""
+    for att in atts:
+        if att.get("storyTextAttachmentJson"):
+            text = " ".join((text_story_data(att).get("text") or "").split())
+            return (text[:60] + "...") if len(text) > 60 else text or "Text story"
+        ctype = att.get("contentType") or ""
+        if ctype.startswith(("image/", "video/")):
+            return "Photo" if ctype.startswith("image/") else "Video"
+    return "Story"
+
+
+def story_reply_quote(data: dict, outgoing: bool, story: str | None, href: str | None,
+                      name_for_aci) -> str:
+    ctx = data.get("storyReplyContext") if isinstance(data.get("storyReplyContext"), dict) else {}
+    author = name_for_aci(ctx.get("authorAci")) if ctx.get("authorAci") else None
+    owner = "your story" if author == "You" else f"{author}'s story" if author else "a story"
+    reaction = data.get("storyReaction") if isinstance(data.get("storyReaction"), dict) else None
+    what = f"Reacted {reaction.get('emoji') or ''} to {owner}" if reaction else f"Replied to {owner}"
+    if story is None:
+        detail = '<span class="deleted">No longer available</span>'
+    elif href:
+        detail = f'<a href="{esc(href)}">{esc(story)}</a>'
+    else:
+        detail = esc(story)
+    return f'<div class="quote story-quote"><b>{esc(what)}</b><br>{detail}</div>'
+
+
+def render_story_replies(rows, name_for_aci) -> tuple[str, list]:
+    items, texts = [], []
+    for row in rows:
+        try:
+            d = json.loads(row["json"] or "{}")
+        except json.JSONDecodeError:
+            d = {}
+        who = "You" if row["type"] == "outgoing" else name_for_aci(row["sourceServiceId"])
+        body = apply_mentions(row["body"] or d.get("body") or "", d.get("bodyRanges"), name_for_aci)
+        reaction = d.get("storyReaction") if isinstance(d.get("storyReaction"), dict) else None
+        if reaction and not body:
+            text = f"reacted {reaction.get('emoji') or ''}"
+        elif body:
+            text = body
+            texts.append(body)
+        else:
+            continue
+        items.append(f'<div class="sreply"><b>{esc(who)}</b> {linkify(text)}'
+                     f'<span class="time">{esc(fmt_time(row["sent_at"]))}</span></div>')
+    if not items:
+        return "", texts
+    label = "1 reply" if len(items) == 1 else f"{len(items)} replies"
+    return f'<details class="story-replies"><summary>{label}</summary>{"".join(items)}</details>', texts
+
+
+class Stories:
+    """Looks up stories and their group replies, which live outside the timeline."""
+
+    def __init__(self, conn, attachments):
+        self.conn, self.attachments = conn, attachments
+
+    def label(self, story_id) -> str | None:
+        row = self.conn.execute("SELECT id FROM messages WHERE id = ? AND type = 'story'",
+                                (story_id,)).fetchone()
+        return story_label(self.attachments.get(story_id, [])) if row else None
+
+    def replies(self, story_id) -> list:
+        return self.conn.execute(
+            "SELECT json, body, type, sent_at, sourceServiceId FROM messages"
+            " WHERE storyId = ? AND type IN ('incoming', 'outgoing')"
+            " ORDER BY received_at, sent_at", (story_id,)).fetchall()
+
+
 def render_contact(contact: dict) -> str:
     name = contact.get("name") or {}
     label = (name.get("displayName")
@@ -1763,8 +1894,9 @@ def reactor_title(reactions, emoji, name_for_cid) -> str:
 
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                         export_att, emit_chunk, name_for_cid=None,
-                        sender_avatar=None) -> Rendered:
+                        sender_avatar=None, stories=None) -> Rendered:
     chunker = Chunker(emit_chunk)
+    story_entries = {}
     hits = []
     media = []
     links = []
@@ -1780,13 +1912,22 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         data.update({c: row[c] for c in JSON_COLUMNS if c in row.keys() and row[c] is not None})
 
         msg_type = row["type"]
+        story_id = data.get("storyId")
+        if story_id and stories and convo["type"] == "group":
+            continue  # shown in the thread of its story
+        is_story = msg_type == "story"
+        if is_story:
+            msg_type = "outgoing" if name_for_aci(row["sourceServiceId"]) == "You" else "incoming"
         body = "" if data.get("deletedForEveryone") else apply_mentions(
             row["body"] or data.get("body") or "", data.get("bodyRanges"), name_for_aci
         )
         atts = attachments.get(row["id"], [])
+        text_story = next((a for a in atts if a.get("storyTextAttachmentJson")), None)
+        atts = [a for a in atts if a is not text_story]
         by_type = defaultdict(list)
         for att in atts:
             by_type[att["attachmentType"]].append(att)
+        story_reaction = isinstance(data.get("storyReaction"), dict)
         quote = data.get("quote") if isinstance(data.get("quote"), dict) else None
         sticker = data.get("sticker") if isinstance(data.get("sticker"), dict) else None
         previews = [p for p in data.get("preview") or [] if isinstance(p, dict)]
@@ -1798,6 +1939,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         has_content = bool(
             body or by_type["attachment"] or quote or sticker or contacts
             or data.get("deletedForEveryone") or view_once_gone or unsupported or poll
+            or text_story or story_reaction or (is_story and atts)
         )
 
         # Anything with no renderable content is either a system event (group
@@ -1835,6 +1977,13 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         if quote:
             inner.append(render_quote(quote, by_type["quote"],
                                       name_for_aci(quote.get("authorAci")), att_rel_dir))
+        if is_story:
+            story_entries[row["id"]] = rendered
+            inner.append('<div class="story-tag">Story</div>')
+        elif story_id and stories:
+            n = story_entries.get(story_id)
+            inner.append(story_reply_quote(data, outgoing, stories.label(story_id),
+                                           f"#m{n}" if n else None, name_for_aci))
 
         if data.get("deletedForEveryone"):
             inner.append('<div class="body deleted">This message was deleted.</div>')
@@ -1847,6 +1996,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                 inner.append(f'<div class="body">{linkify(body)}</div>')
             if poll:
                 inner.append(render_poll(poll, name_for_cid, str(rendered)))
+            if text_story:
+                inner.append(render_text_story(text_story))
             view_once = bool(data.get("isViewOnce"))
             for i, att in enumerate(by_type["attachment"]):
                 html = render_attachment(att, att_rel_dir)
@@ -1857,7 +2008,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                     media.append({"n": rendered, "ts": row["sent_at"], "name": att["_exported"],
                                   "poster": att.get("_poster"), "type": att.get("contentType") or "",
                                   "label": att.get("fileName") or "", "size": att.get("size"),
-                                  "flags": att.get("flags") or 0, "view_once": view_once})
+                                  "flags": att.get("flags") or 0, "view_once": view_once,
+                                  "story": is_story})
             if sticker:
                 inner.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
                                             att_rel_dir))
@@ -1868,8 +2020,13 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                     links.append({"n": rendered, "ts": row["sent_at"], "url": preview["url"],
                                   "title": preview.get("title") or preview["url"]})
             inner.extend(render_contact(c) for c in contacts)
+            replies = []
+            if is_story and stories and convo["type"] == "group":
+                thread, replies = render_story_replies(stories.replies(row["id"]), name_for_aci)
+                inner.append(thread)
             searchable = " ".join(t for t in (
                 [body] + [a.get("caption") for a in by_type["attachment"]]
+                + [text_story_data(text_story).get("text") if text_story else None] + replies
                 + ([poll.get("question")] + [str(o) for o in poll.get("options") or []] if poll else [])
                 + [p.get("title") for p in previews]) if t)
             if searchable:
@@ -1896,7 +2053,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                          f'{"version" if len(edits) == 1 else "versions"})</summary>{versions}</details>')
 
         inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
-        css_class = "msg out" if outgoing else "msg"
+        css_class = ("msg out" if outgoing else "msg") + (" story" if is_story else "")
         chunker.add(row["sent_at"], f'<div class="{css_class}" id="m{rendered}">'
                     f'{sender_html}<div class="bubble">{"".join(inner)}</div></div>', rendered)
 
@@ -1954,7 +2111,8 @@ def media_tile(item: dict, rel_dir: str, chat_href: str) -> str:
     thumb = f'<a class="thumb" href="{href}">{thumb}</a>'
     if item.get("view_once"):
         thumb = view_once_cover(thumb, item["type"], f'{item["n"]}/{item["name"]}')
-    return f'<div class="tile">{thumb}{media_goto(chat_href, item["n"])}</div>'
+    tag = '<span class="tile-tag">Story</span>' if item.get("story") else ""
+    return f'<div class="tile">{thumb}{tag}{media_goto(chat_href, item["n"])}</div>'
 
 
 def media_row(item: dict, rel_dir: str, chat_href: str) -> str:
@@ -2137,6 +2295,9 @@ def main() -> int:
     aci_to_convo = {c["serviceId"]: c for c in all_convos.values() if c.get("serviceId")}
     sender_cache: dict = {}
 
+    has_story_ids = "storyId" in {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    stories = Stories(conn, attachments) if has_story_ids else None
+
     def sender_avatar(aci):
         convo = aci_to_convo.get(aci)
         if not convo:
@@ -2196,7 +2357,7 @@ def main() -> int:
                 f"{slug}_files",
                 store.export,
                 emit_chunk,
-                name_for_cid, sender_avatar,
+                name_for_cid, sender_avatar, stories,
             )
             if not result.count:
                 shutil.rmtree(att_dir, ignore_errors=True)
