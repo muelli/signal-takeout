@@ -674,7 +674,7 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
 .time { font-size:.7rem; opacity:.6; margin-top:.25rem; text-align:right; }
 .system { text-align:center; color:var(--muted); font-size:.8rem;
   margin:.6rem 0; font-style:italic; }
-.deleted { font-style:italic; opacity:.7; }
+.deleted { font-style:italic; opacity:.7; padding-right:.2em; }
 .quote { border-left:3px solid currentColor; opacity:.75; padding-left:.5rem;
   margin-bottom:.35rem; font-size:.85rem; }
 .edits { margin-top:.3rem; font-size:.8rem; opacity:.8; }
