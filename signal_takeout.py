@@ -634,7 +634,21 @@ h3.month { font-size:.8rem; font-weight:600; color:var(--muted); margin:1rem 0 .
 .vo-seen:focus-visible ~ .vo-cover { outline:2px solid; outline-offset:-4px; }
 .vo-seen:checked ~ .vo-cover { display:none; }
 .tile > .viewonce { height:100%; margin:0; border-radius:0; min-width:0; min-height:0; }
-.poll { min-width:min(16rem, 60vw); }
+.poll { display:grid; min-width:min(16rem, 60vw); perspective:60rem; }
+.poll-flip { position:absolute; opacity:0; pointer-events:none; }
+.poll-face { grid-area:1/1; backface-visibility:hidden; -webkit-backface-visibility:hidden;
+  transition:transform .4s, visibility 0s .2s; }
+.poll-back { transform:rotateY(180deg); visibility:hidden; }
+.poll-flip:checked ~ .poll-front { transform:rotateY(-180deg); visibility:hidden; }
+.poll-flip:checked ~ .poll-back { transform:none; visibility:visible; }
+@media (prefers-reduced-motion: reduce) { .poll-face { transition:none; } }
+.poll-pill { float:right; position:relative; z-index:1; margin-left:.5rem; padding:0 .5rem; border:1px solid currentColor;
+  border-radius:999px; font-size:.7rem; font-weight:400; line-height:1.5; opacity:.75;
+  cursor:pointer; }
+.poll-pill:hover, .poll-flip:focus-visible ~ .poll-face .poll-pill { opacity:1; }
+.poll-who { list-style:none; padding:0; margin:0; }
+.poll-who li { margin-top:.3rem; }
+.poll-who .pvoters { display:block; font-size:.8rem; opacity:.8; }
 .poll-q { font-weight:600; }
 .poll-sub { font-size:.75rem; opacity:.7; margin-bottom:.2rem; }
 .poll-opts { list-style:none; padding:0; margin:0; }
@@ -1471,35 +1485,47 @@ def view_once_note(data: dict, outgoing: bool) -> str:
     return "View-once media, viewed" if data.get("readStatus") == 2 else "View-once media, expired"
 
 
-def render_poll(poll: dict, name_for_cid=None) -> str:
+def render_poll(poll: dict, name_for_cid=None, key: str = "") -> str:
     options = [str(o) for o in poll.get("options") or []]
     latest = {}
     # Each voter counts once: highest voteCount, then newest, as in Signal.
     for v in poll.get("votes") or []:
         if not isinstance(v, dict) or v.get("sendStateByConversationId"):
             continue
-        key = (v.get("voteCount") or 0, v.get("timestamp") or 0)
+        vote_key = (v.get("voteCount") or 0, v.get("timestamp") or 0)
         old = latest.get(v.get("fromConversationId"))
-        if old is None or key > (old.get("voteCount") or 0, old.get("timestamp") or 0):
+        if old is None or vote_key > (old.get("voteCount") or 0, old.get("timestamp") or 0):
             latest[v.get("fromConversationId")] = v
     voters = defaultdict(list)
     for who, v in latest.items():
         for i in set(v.get("optionIndexes") or []):
             if isinstance(i, int) and 0 <= i < len(options):
                 voters[i].append(who)
+    names = {i: sorted(name_for_cid(c) for c in cids) for i, cids in voters.items()} if name_for_cid else {}
     if poll.get("terminatedAt"):
         sub = "Poll &middot; Final results"
     else:
         sub = "Poll &middot; Select " + ("one or more" if poll.get("allowMultiple") else "one")
-    rows = []
+    rows, who = [], []
     for i, option in enumerate(options):
-        names = sorted(name_for_cid(c) for c in voters[i]) if name_for_cid else []
-        title = f' title="{esc(", ".join(names))}"' if names else ""
+        title = f' title="{esc(", ".join(names[i]))}"' if names.get(i) else ""
         pct = round(100 * len(voters[i]) / len(latest)) if latest else 0
         rows.append(f'<li style="--p:{pct}%"{title}><span class="popt">{esc(option)}</span>'
                     f'<span class="pcount">{len(voters[i])}</span></li>')
-    return (f'<div class="poll"><div class="poll-q">{esc(poll.get("question") or "")}</div>'
-            f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div>')
+        who.append(f'<li>{esc(option)}<span class="pvoters">'
+                   f'{esc(", ".join(names.get(i, [])) or "No votes")}</span></li>')
+    question = esc(poll.get("question") or "")
+    if not names:
+        return (f'<div class="poll"><div class="poll-face"><div class="poll-q">{question}</div>'
+                f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div></div>')
+    pid = f"pv{zlib.crc32(key.encode()):08x}"
+    return (f'<div class="poll"><input type="checkbox" class="poll-flip" id="{pid}">'
+            f'<div class="poll-face poll-front"><label class="poll-pill" for="{pid}">Votes</label>'
+            f'<div class="poll-q">{question}</div>'
+            f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div>'
+            f'<div class="poll-face poll-back"><label class="poll-pill" for="{pid}">Back</label>'
+            f'<div class="poll-sub">Who voted</div>'
+            f'<ul class="poll-who">{"".join(who)}</ul></div></div>')
 
 
 def render_contact(contact: dict) -> str:
@@ -1820,7 +1846,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             if body:
                 inner.append(f'<div class="body">{linkify(body)}</div>')
             if poll:
-                inner.append(render_poll(poll, name_for_cid))
+                inner.append(render_poll(poll, name_for_cid, str(rendered)))
             view_once = bool(data.get("isViewOnce"))
             for i, att in enumerate(by_type["attachment"]):
                 html = render_attachment(att, att_rel_dir)

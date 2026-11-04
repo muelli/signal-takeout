@@ -145,6 +145,11 @@ through `pty.openpty()` from Python instead, set a window size with
   original file with `loading=lazy`, there are no generated thumbnails.
   "in chat" links use `#mN`.
 - Preview URLs are only linked when they start with http:// or https://.
+- Click toggles without JS (view-once cover, poll flip) are a hidden checkbox
+  plus `<label for>`, styled with `:checked ~`; ids come from a crc32 of a key
+  unique within the page. A closed `<details>` would not render (or blur) its
+  content. A label next to a half-transparent element needs `position` and
+  `z-index`, or the element's layer takes its clicks.
 - `linkify` turns http(s) URLs in bodies, captions and edits into links
   (trailing punctuation and unbalanced closing brackets are dropped, the host
   must parse). Find highlights per text node and restores a saved clone, so

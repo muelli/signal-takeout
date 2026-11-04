@@ -364,6 +364,13 @@ def test_polls_count_each_voter_once(export):
     assert ('<li style=\\"--p:67%\\" title=\\"Bob, Toby\\"><span class=\\"popt\\">Sunday'
             '</span><span class=\\"pcount\\">2</span></li>') in group
     assert '<div class=\\"system\\">Alice Anderson ended the poll: Saturday or Sunday?</div>' in group
+    flip = re.search(r'<input type=\\"checkbox\\" class=\\"poll-flip\\" id=\\"(pv[0-9a-f]{8})\\">'
+                     r'<div class=\\"poll-face poll-front\\"><label class=\\"poll-pill\\" for=\\"\1\\">'
+                     r'Votes</label>.*?<label class=\\"poll-pill\\" for=\\"\1\\">Back</label>', group)
+    assert flip
+    assert ('<ul class=\\"poll-who\\"><li>Saturday<span class=\\"pvoters\\">Alice Anderson</span></li>'
+            '<li>Sunday<span class=\\"pvoters\\">Bob, Toby</span></li></ul>') in group
+    assert "poll-flip" not in st.render_poll({"question": "Q", "options": ["a"]}, lambda c: c)
     assert st.render_poll({"question": "Q", "options": ["a"], "allowMultiple": True}).count(
         "Select one or more") == 1
 
