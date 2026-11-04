@@ -186,6 +186,11 @@ through `pty.openpty()` from Python instead, set a window size with
   the vote with the highest `voteCount`, then the newest, counts, and votes
   with `sendStateByConversationId` are unsent (`ts/state/selectors/message.preload.ts`).
   Ending a poll adds a `poll-terminate` message with `pollTerminateNotification`.
+- Other erases are `delete-for-everyone` and `unsupported-message` (needs a
+  newer protocol; only `requiredProtocolVersion` survives). Nothing of the
+  content can be recovered from the db: Signal's SQLCipher 4.18 build has
+  `SQLITE_SECURE_DELETE`, FTS5 `secure-delete` is on (migration 950), and the
+  WAL is truncated after deletes.
 - View-once messages keep `isViewOnce`. `eraseMessageContents`
   (`ts/util/cleanup.preload.ts`) wipes body and attachments and sets
   `isErased` when the media is viewed (`readStatus` 2), expires unopened (after

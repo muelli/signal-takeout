@@ -1442,6 +1442,21 @@ def view_once_cover(html: str, ctype: str) -> str:
             f'</summary>{html}</details>')
 
 
+# DataMessage.ProtocolVersion in Signal's SignalService.proto
+PROTOCOL_FEATURES = {1: "disappearing messages", 2: "view-once media", 3: "view-once videos",
+                     4: "reactions", 5: "new attachment storage", 6: "mentions",
+                     7: "payments", 8: "polls"}
+
+
+def unsupported_note(data: dict) -> str:
+    """Signal erases messages that need a newer version; only that version is kept."""
+    version = data.get("requiredProtocolVersion")
+    if not isinstance(version, int):
+        return "Unsupported message"
+    feature = PROTOCOL_FEATURES.get(version, f"protocol version {version}")
+    return f"Unsupported message, it needs a newer Signal ({feature})"
+
+
 def view_once_note(data: dict, outgoing: bool) -> str:
     """Signal erases view-once media once viewed, expired, sent or found invalid."""
     if outgoing:
@@ -1747,9 +1762,11 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         contacts = [c for c in data.get("contact") or [] if isinstance(c, dict)]
         poll = data.get("poll") if isinstance(data.get("poll"), dict) else None
         view_once_gone = bool(data.get("isViewOnce") and data.get("isErased"))
+        unsupported = bool(data.get("isErased") and not data.get("isViewOnce")
+                           and not data.get("deletedForEveryone"))
         has_content = bool(
             body or by_type["attachment"] or quote or sticker or contacts
-            or data.get("deletedForEveryone") or view_once_gone or poll
+            or data.get("deletedForEveryone") or view_once_gone or unsupported or poll
         )
 
         # Anything with no renderable content is either a system event (group
@@ -1792,6 +1809,8 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             inner.append('<div class="body deleted">This message was deleted.</div>')
         elif view_once_gone:
             inner.append(f'<div class="deleted">{view_once_note(data, outgoing)}</div>')
+        elif unsupported:
+            inner.append(f'<div class="deleted">{esc(unsupported_note(data))}</div>')
         else:
             if body:
                 inner.append(f'<div class="body">{linkify(body)}</div>')

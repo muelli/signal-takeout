@@ -176,6 +176,10 @@ def main() -> None:
          {"isViewOnce": True, "isErased": True}),
         ("v5", "conv-bob", "incoming", BOB, now - 2_700_000, None,
          {"isViewOnce": True, "isErased": True, "isTapToViewInvalid": True}),
+        # Too new for this Signal: erased on arrival, only the needed version is kept.
+        ("u1", "conv-bob", "incoming", BOB, now - 2_600_000, None,
+         {"isErased": True, "requiredProtocolVersion": 8}),
+        ("u2", "conv-bob", "incoming", BOB, now - 2_500_000, None, {"isErased": True}),
         ("m9", "conv-bob", "incoming", BOB, now - 600_000, "Ping", {}),
         # Bob changed his vote; Alice's second vote was never sent, so it does not count.
         ("m8p", "conv-group", "incoming", ALICE, now - 2500_000, None,

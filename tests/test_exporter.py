@@ -362,3 +362,11 @@ def test_polls_count_each_voter_once(export):
     assert '<div class=\\"system\\">Alice Anderson ended the poll: Saturday or Sunday?</div>' in group
     assert st.render_poll({"question": "Q", "options": ["a"], "allowMultiple": True}).count(
         "Select one or more") == 1
+
+
+def test_unsupported_messages_say_what_they_needed(export):
+    out, _ = export
+    bob = chunks_text(out, "Bob")
+    assert '<div class=\\"deleted\\">Unsupported message, it needs a newer Signal (polls)</div>' in bob
+    assert '<div class=\\"deleted\\">Unsupported message</div>' in bob
+    assert st.unsupported_note({"requiredProtocolVersion": 42}).endswith("(protocol version 42)")
