@@ -391,8 +391,8 @@ def test_stories_show_with_their_replies(export):
                       r'<div class=\\"caption\\">Sunset at the lake</div>', alice)
     assert story
     link = f'<a href=\\"#m{story.group(1)}\\">Photo</a>'
-    assert f"<b>Replied to Alice Anderson&#x27;s story</b><br>{link}</div>" in alice
-    assert f"<b>Reacted \U0001F60D to Alice Anderson&#x27;s story</b><br>{link}</div>" in alice
+    assert f"<b>Replied to Alice Anderson&#39;s story</b><br>{link}</div>" in alice
+    assert f"<b>Reacted \U0001F60D to Alice Anderson&#39;s story</b><br>{link}</div>" in alice
     assert ('<b>Replied to your story</b><br><span class=\\"deleted\\">No longer available</span>'
             in alice)
     assert '<span class="tile-tag">Story</span>' in media_page(out, "Alice")

@@ -853,6 +853,117 @@ TEMPLATES = {
         <div class="viewonce"><input type="checkbox" class="vo-seen" id="{{ vid }}">{{ content }}<label
             class="vo-cover" for="{{ vid }}">View-once {{ kind }}<span>click to show</span></label></div>
     """,
+    "attachment": """
+        {% set label = att.fileName or att.contentType or "attachment" %}{% set size = att.size|size %}
+        {% if not att.get("_exported") %}
+          <div class="missing">[attachment {{ label }}{% if size %} ({{ size }}){% endif %}:
+            {{ att.get("_error") or "not exported" }}]</div>
+        {% else %}
+          {% set href = att_url(rel_dir, att._exported) %}{% set ctype = att.contentType or "" %}
+          {% if ctype.startswith("image/") %}
+            <div class="att"><a href="{{ href }}"><img loading="lazy"{{ dims(att) }} src="{{ href }}"
+                alt="{{ label }}"></a></div>
+          {% elif ctype.startswith("video/") and att.flags is gif %}
+            <div class="att"><video{{ dims(att) }} src="{{ href }}" autoplay loop muted playsinline></video></div>
+          {% elif ctype.startswith("video/") %}
+            <div class="att"><video controls preload="{{ "none" if att.get("_poster") else "metadata" }}"
+                {{- dims(att) }}{% if att.get("_poster") %} poster="{{ att_url(rel_dir, att._poster) }}"{% endif %} src="{{ href }}"></video></div>
+          {% elif ctype.startswith("audio/") %}
+            <div class="att"><div class="att-label">{{ "Voice message" if att.flags is voice else label }}</div>
+              <audio controls preload="none" src="{{ href }}"></audio></div>
+          {% else %}
+            <a class="att-file" href="{{ href }}" download{% if att.fileName %}="{{ att.fileName }}"{% endif %}>
+              \U0001F4CE {{ label }}{% if size %} <span class="att-size">({{ size }})</span>{% endif %}</a>
+          {% endif %}
+        {% endif %}
+        {% if att.caption %}<div class="caption">{{ att.caption|linkify }}</div>{% endif %}
+    """,
+    "quote": """
+        <div class="quote">
+          {% if thumb %}<img class="qthumb" loading="lazy" alt="" src="{{ att_url(rel_dir, thumb._exported) }}">{% endif %}
+          <b>{{ author }}</b><br>{{ text }}
+        </div>
+    """,
+    "preview": """
+        {% set url = preview.get("url") or "" %}
+        {% set inner %}
+          {% if image and image.get("_exported") %}
+            <img loading="lazy"{{ dims(image) }} alt="" src="{{ att_url(rel_dir, image._exported) }}">
+          {% endif %}
+          <div class="ptitle">{{ preview.get("title") or url }}</div>
+          {% if preview.get("description") %}<div class="pdesc">{{ preview.description }}</div>{% endif %}
+          <div class="purl">{{ url }}</div>
+        {% endset %}
+        {% if url.startswith(("http://", "https://")) %}
+          <a class="preview" href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ inner }}</a>
+        {% else %}
+          <div class="preview">{{ inner }}</div>
+        {% endif %}
+    """,
+    "sticker": """
+        {% if att and att.get("_exported") %}
+          <div class="att"><img class="sticker" loading="lazy"{{ dims(att) }} alt="{{ emoji }}"
+              src="{{ att_url(rel_dir, att._exported) }}"></div>
+        {% else %}
+          <div class="missing">[sticker {{ emoji }}]</div>
+        {% endif %}
+    """,
+    "contact": """
+        <div class="contact">Contact: {{ label }}{% if detail %} ({{ detail }}){% endif %}</div>
+    """,
+    "poll": """
+        <div class="poll">
+          {% if pid %}
+            <input type="checkbox" class="poll-flip" id="{{ pid }}">
+            <div class="poll-face poll-front"><label class="poll-pill" for="{{ pid }}">Votes</label>
+          {% else %}
+            <div class="poll-face">
+          {% endif %}
+            <div class="poll-q">{{ question }}</div>
+            <div class="poll-sub">Poll &middot;
+              {{ "Final results" if final else "Select one or more" if multiple else "Select one" }}</div>
+            <ol class="poll-opts">
+              {% for o in options %}
+                <li style="--p:{{ o.pct }}%"{% if o.names %} title="{{ o.names|join(", ") }}"{% endif %}>
+                  <span class="popt">{{ o.text }}</span><span class="pcount">{{ o.voters }}</span></li>
+              {% endfor %}
+            </ol>
+          </div>
+          {% if pid %}
+            <div class="poll-face poll-back"><label class="poll-pill" for="{{ pid }}">Back</label>
+              <div class="poll-sub">Who voted</div>
+              <ul class="poll-who">
+                {% for o in options %}
+                  <li>{{ o.text }}<span class="pvoters">{{ o.names|join(", ") or "No votes" }}</span></li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        </div>
+    """,
+    "text_story": """
+        <div class="text-story ts{{ style }}" style="background:{{ background }}">
+          {% if text %}
+            <span style="color:{{ fg }}{% if box %};background:{{ box }}{% endif %}">{{ text|linkify }}</span>
+          {% endif %}
+          {% if url %}<a class="purl" href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a>{% endif %}
+        </div>
+    """,
+    "story_quote": """
+        <div class="quote story-quote"><b>{{ what }}</b><br>
+          {% if story is none %}<span class="deleted">No longer available</span>
+          {% elif href %}<a href="{{ href }}">{{ story }}</a>
+          {% else %}{{ story }}{% endif %}
+        </div>
+    """,
+    "story_replies": """
+        <details class="story-replies">
+          <summary>{{ "1 reply" if replies|length == 1 else replies|length ~ " replies" }}</summary>
+          {% for who, text, ts in replies %}
+            <div class="sreply"><b>{{ who }}</b> {{ text|linkify }}<span class="time">{{ ts|time }}</span></div>
+          {% endfor %}
+        </details>
+    """,
     "media_page": """
         {% macro goto(n) %}<a class="goto" href="{{ chat_href }}#m{{ n }}" title="Show in chat">in chat</a>{% endmacro %}
         {% macro tile(i) %}
@@ -1540,7 +1651,7 @@ def linkify(text) -> str:
         out.append(f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(url)}</a>')
         pos = m.start() + len(url)
     out.append(esc(text[pos:]))
-    return "".join(out)
+    return Markup("".join(out))
 
 
 def att_url(rel_dir: str, name: str) -> str:
@@ -1551,44 +1662,16 @@ def att_href(rel_dir: str, name: str) -> str:
     return esc(att_url(rel_dir, name))
 
 
-def dims(att: dict | None) -> str:
+def dims(att: dict | None) -> Markup:
     """width/height attributes, so the browser reserves the box before loading."""
     w, h = (att or {}).get("width"), (att or {}).get("height")
     if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
-        return f' width="{w}" height="{h}"'
-    return ""
+        return Markup(f' width="{w}" height="{h}"')
+    return Markup()
 
 
-def render_attachment(att: dict, rel_dir: str) -> str:
-    name = att.get("fileName") or ""
-    label = esc(name or att.get("contentType") or "attachment")
-    size = human_size(att.get("size"))
-    caption = f'<div class="caption">{linkify(att["caption"])}</div>' if att.get("caption") else ""
-    if not att.get("_exported"):
-        reason = att.get("_error") or "not exported"
-        detail = f" ({size})" if size else ""
-        return f'<div class="missing">[attachment {label}{detail}: {esc(reason)}]</div>' + caption
-
-    href = att_href(rel_dir, att["_exported"])
-    ctype = att.get("contentType") or ""
-    flags = att.get("flags") or 0
-    if ctype.startswith("image/"):
-        media = f'<a href="{href}"><img loading="lazy"{dims(att)} src="{href}" alt="{label}"></a>'
-    elif ctype.startswith("video/") and flags & GIF:
-        media = f'<video{dims(att)} src="{href}" autoplay loop muted playsinline></video>'
-    elif ctype.startswith("video/"):
-        poster = f' poster="{att_href(rel_dir, att["_poster"])}"' if att.get("_poster") else ""
-        preload = "none" if poster else "metadata"
-        media = f'<video controls preload="{preload}"{dims(att)}{poster} src="{href}"></video>'
-    elif ctype.startswith("audio/"):
-        tag = "Voice message" if flags & VOICE_MESSAGE else label
-        media = f'<div class="att-label">{tag}</div><audio controls preload="none" src="{href}"></audio>'
-    else:
-        download = f' download="{esc(name)}"' if name else " download"
-        detail = f' <span class="att-size">({size})</span>' if size else ""
-        return (f'<a class="att-file" href="{href}"{download}>\U0001F4CE {label}{detail}</a>'
-                + caption)
-    return f'<div class="att">{media}</div>' + caption
+def render_attachment(att: dict, rel_dir: str) -> Markup:
+    return render("attachment", att=att, rel_dir=rel_dir)
 
 
 def quote_label(quote_atts) -> str:
@@ -1598,33 +1681,18 @@ def quote_label(quote_atts) -> str:
     return first.get("fileName") or named or "Attachment"
 
 
-def render_quote(quote_data: dict, thumbs: list, author: str, rel_dir: str) -> str:
-    text = quote_data.get("text") or quote_label(quote_data.get("attachments") or [])
-    thumb = next((t for t in thumbs if t.get("_exported")), None)
-    img = (f'<img class="qthumb" loading="lazy" alt="" '
-           f'src="{att_href(rel_dir, thumb["_exported"])}">' if thumb else "")
-    return f'<div class="quote">{img}<b>{esc(author)}</b><br>{esc(text)}</div>'
+def render_quote(quote_data: dict, thumbs: list, author: str, rel_dir: str) -> Markup:
+    return render("quote", rel_dir=rel_dir, author=author,
+                  text=quote_data.get("text") or quote_label(quote_data.get("attachments") or []),
+                  thumb=next((t for t in thumbs if t.get("_exported")), None))
 
 
-def render_preview(preview: dict, image: dict | None, rel_dir: str) -> str:
-    url = preview.get("url") or ""
-    img = (f'<img loading="lazy"{dims(image)} alt="" src="{att_href(rel_dir, image["_exported"])}">'
-           if image and image.get("_exported") else "")
-    title = esc(preview.get("title") or url)
-    desc = f'<div class="pdesc">{esc(preview["description"])}</div>' if preview.get("description") else ""
-    inner = f'{img}<div class="ptitle">{title}</div>{desc}<div class="purl">{esc(url)}</div>'
-    if url.startswith(("http://", "https://")):
-        return (f'<a class="preview" href="{esc(url)}" target="_blank" '
-                f'rel="noopener noreferrer">{inner}</a>')
-    return f'<div class="preview">{inner}</div>'
+def render_preview(preview: dict, image: dict | None, rel_dir: str) -> Markup:
+    return render("preview", preview=preview, image=image, rel_dir=rel_dir)
 
 
-def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
-    emoji = esc(sticker.get("emoji") or "")
-    if att and att.get("_exported"):
-        return (f'<div class="att"><img class="sticker" loading="lazy"{dims(att)} alt="{emoji}" '
-                f'src="{att_href(rel_dir, att["_exported"])}"></div>')
-    return f'<div class="missing">[sticker {emoji}]</div>'
+def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> Markup:
+    return render("sticker", emoji=sticker.get("emoji") or "", att=att, rel_dir=rel_dir)
 
 
 def view_once_cover(html: str, ctype: str, key: str) -> Markup:
@@ -1658,7 +1726,7 @@ def view_once_note(data: dict, outgoing: bool) -> str:
     return "View-once media, viewed" if data.get("readStatus") == 2 else "View-once media, expired"
 
 
-def render_poll(poll: dict, name_for_cid=None, key: str = "") -> str:
+def render_poll(poll: dict, name_for_cid=None, key: str = "") -> Markup:
     options = [str(o) for o in poll.get("options") or []]
     latest = {}
     # Each voter counts once: highest voteCount, then newest, as in Signal.
@@ -1675,30 +1743,12 @@ def render_poll(poll: dict, name_for_cid=None, key: str = "") -> str:
             if isinstance(i, int) and 0 <= i < len(options):
                 voters[i].append(who)
     names = {i: sorted(name_for_cid(c) for c in cids) for i, cids in voters.items()} if name_for_cid else {}
-    if poll.get("terminatedAt"):
-        sub = "Poll &middot; Final results"
-    else:
-        sub = "Poll &middot; Select " + ("one or more" if poll.get("allowMultiple") else "one")
-    rows, who = [], []
-    for i, option in enumerate(options):
-        title = f' title="{esc(", ".join(names[i]))}"' if names.get(i) else ""
-        pct = round(100 * len(voters[i]) / len(latest)) if latest else 0
-        rows.append(f'<li style="--p:{pct}%"{title}><span class="popt">{esc(option)}</span>'
-                    f'<span class="pcount">{len(voters[i])}</span></li>')
-        who.append(f'<li>{esc(option)}<span class="pvoters">'
-                   f'{esc(", ".join(names.get(i, [])) or "No votes")}</span></li>')
-    question = esc(poll.get("question") or "")
-    if not names:
-        return (f'<div class="poll"><div class="poll-face"><div class="poll-q">{question}</div>'
-                f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div></div>')
-    pid = f"pv{zlib.crc32(key.encode()):08x}"
-    return (f'<div class="poll"><input type="checkbox" class="poll-flip" id="{pid}">'
-            f'<div class="poll-face poll-front"><label class="poll-pill" for="{pid}">Votes</label>'
-            f'<div class="poll-q">{question}</div>'
-            f'<div class="poll-sub">{sub}</div><ol class="poll-opts">{"".join(rows)}</ol></div>'
-            f'<div class="poll-face poll-back"><label class="poll-pill" for="{pid}">Back</label>'
-            f'<div class="poll-sub">Who voted</div>'
-            f'<ul class="poll-who">{"".join(who)}</ul></div></div>')
+    rows = [{"text": option, "voters": len(voters[i]), "names": names.get(i, []),
+             "pct": round(100 * len(voters[i]) / len(latest)) if latest else 0}
+            for i, option in enumerate(options)]
+    return render("poll", question=poll.get("question") or "", options=rows,
+                  final=bool(poll.get("terminatedAt")), multiple=bool(poll.get("allowMultiple")),
+                  pid=f"pv{zlib.crc32(key.encode()):08x}" if names else None)
 
 
 def argb_hex(color, default: int = 0xFFFBFBFB) -> str:
@@ -1729,17 +1779,14 @@ def text_story_data(att: dict) -> dict:
     return t if isinstance(t, dict) else {}
 
 
-def render_text_story(att: dict) -> str:
+def render_text_story(att: dict) -> Markup:
     t = text_story_data(att)
-    style = t.get("textStyle") if t.get("textStyle") in (2, 3, 4, 5) else 1
-    box = f";background:{argb_hex(t['textBackgroundColor'])}" if t.get("textBackgroundColor") else ""
-    text = (f'<span style="color:{argb_hex(t.get("textForegroundColor"))}{box}">'
-            f'{linkify(t.get("text") or "")}</span>' if t.get("text") else "")
     url = (t.get("preview") or {}).get("url") if isinstance(t.get("preview"), dict) else None
-    link = (f'<a class="purl" href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(url)}</a>'
-            if url and url.startswith(("http://", "https://")) else "")
-    return (f'<div class="text-story ts{style}" style="background:{esc(story_background(t))}">'
-            f'{text}{link}</div>')
+    return render("text_story", background=story_background(t), text=t.get("text") or "",
+                  style=t.get("textStyle") if t.get("textStyle") in (2, 3, 4, 5) else 1,
+                  fg=argb_hex(t.get("textForegroundColor")),
+                  box=argb_hex(t["textBackgroundColor"]) if t.get("textBackgroundColor") else None,
+                  url=url if url and url.startswith(("http://", "https://")) else None)
 
 
 def story_label(atts: list) -> str:
@@ -1755,22 +1802,16 @@ def story_label(atts: list) -> str:
 
 
 def story_reply_quote(data: dict, outgoing: bool, story: str | None, href: str | None,
-                      name_for_aci) -> str:
+                      name_for_aci) -> Markup:
     ctx = data.get("storyReplyContext") if isinstance(data.get("storyReplyContext"), dict) else {}
     author = name_for_aci(ctx.get("authorAci")) if ctx.get("authorAci") else None
     owner = "your story" if author == "You" else f"{author}'s story" if author else "a story"
     reaction = data.get("storyReaction") if isinstance(data.get("storyReaction"), dict) else None
     what = f"Reacted {reaction.get('emoji') or ''} to {owner}" if reaction else f"Replied to {owner}"
-    if story is None:
-        detail = '<span class="deleted">No longer available</span>'
-    elif href:
-        detail = f'<a href="{esc(href)}">{esc(story)}</a>'
-    else:
-        detail = esc(story)
-    return f'<div class="quote story-quote"><b>{esc(what)}</b><br>{detail}</div>'
+    return render("story_quote", what=what, story=story, href=href)
 
 
-def render_story_replies(rows, name_for_aci) -> tuple[str, list]:
+def render_story_replies(rows, name_for_aci) -> tuple[Markup, list]:
     items, texts = [], []
     for row in rows:
         try:
@@ -1787,12 +1828,8 @@ def render_story_replies(rows, name_for_aci) -> tuple[str, list]:
             texts.append(body)
         else:
             continue
-        items.append(f'<div class="sreply"><b>{esc(who)}</b> {linkify(text)}'
-                     f'<span class="time">{esc(fmt_time(row["sent_at"]))}</span></div>')
-    if not items:
-        return "", texts
-    label = "1 reply" if len(items) == 1 else f"{len(items)} replies"
-    return f'<details class="story-replies"><summary>{label}</summary>{"".join(items)}</details>', texts
+        items.append((who, text, row["sent_at"]))
+    return (render("story_replies", replies=items) if items else Markup()), texts
 
 
 class Stories:
@@ -1813,14 +1850,13 @@ class Stories:
             " ORDER BY received_at, sent_at", (story_id,)).fetchall()
 
 
-def render_contact(contact: dict) -> str:
+def render_contact(contact: dict) -> Markup:
     name = contact.get("name") or {}
     label = (name.get("displayName")
              or " ".join(p for p in (name.get("givenName"), name.get("familyName")) if p)
              or name.get("organization") or "Contact")
     numbers = [n.get("value") for n in contact.get("number") or [] if isinstance(n, dict)]
-    detail = ", ".join(n for n in numbers if n)
-    return f'<div class="contact">Contact: {esc(label)}{esc(" (" + detail + ")") if detail else ""}</div>'
+    return render("contact", label=label, detail=", ".join(n for n in numbers if n))
 
 
 def describe_system(data: dict) -> str | None:
@@ -2259,9 +2295,10 @@ def render_index(summaries, sort: str) -> Markup:
                   generated=datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
-JINJA.globals.update(avatar=avatar_html, att_url=att_url, view_once=view_once_cover)
-JINJA.filters.update(time=fmt_time, size=human_size)
-JINJA.tests.update(voice=lambda flags: bool((flags or 0) & VOICE_MESSAGE))
+JINJA.globals.update(avatar=avatar_html, att_url=att_url, view_once=view_once_cover, dims=dims)
+JINJA.filters.update(time=fmt_time, size=human_size, linkify=linkify)
+JINJA.tests.update(voice=lambda flags: bool((flags or 0) & VOICE_MESSAGE),
+                   gif=lambda flags: bool((flags or 0) & GIF))
 
 
 # --------------------------------------------------------------------------
