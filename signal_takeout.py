@@ -1065,7 +1065,7 @@ class _TemplateLoader(jinja2.BaseLoader):
         return re.sub(r"\n\s*", " ", source), None, lambda: True
 
 
-JINJA = jinja2.Environment(loader=_TemplateLoader(), autoescape=True,
+JINJA = jinja2.Environment(loader=_TemplateLoader(), autoescape=True, auto_reload=False,
                            undefined=jinja2.StrictUndefined)
 
 
