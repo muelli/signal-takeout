@@ -849,6 +849,68 @@ TEMPLATES = {
         </ul>
         <div id="results" hidden></div>
     """,
+    "view_once": """
+        <div class="viewonce"><input type="checkbox" class="vo-seen" id="{{ vid }}">{{ content }}<label
+            class="vo-cover" for="{{ vid }}">View-once {{ kind }}<span>click to show</span></label></div>
+    """,
+    "media_page": """
+        {% macro goto(n) %}<a class="goto" href="{{ chat_href }}#m{{ n }}" title="Show in chat">in chat</a>{% endmacro %}
+        {% macro tile(i) %}
+          {% set href = att_url(rel_dir, i.name) %}{% set label = i.label or i.type %}
+          {% set thumb %}<a class="thumb" href="{{ href }}">
+            {% if i.type.startswith("image/") %}
+              <img loading="lazy" decoding="async" src="{{ href }}" alt="{{ label }}">
+            {% elif i.poster %}
+              <img loading="lazy" decoding="async" src="{{ att_url(rel_dir, i.poster) }}" alt="{{ label }}">
+              <span class="play">&#9654;</span>
+            {% else %}
+              <span class="novideo">{{ label }}</span><span class="play">&#9654;</span>
+            {% endif %}
+          </a>{% endset %}
+          <div class="tile">
+            {{ view_once(thumb, i.type, i.n ~ "/" ~ i.name) if i.view_once else thumb }}
+            {% if i.story %}<span class="tile-tag">Story</span>{% endif %}{{ goto(i.n) }}
+          </div>
+        {% endmacro %}
+        {% macro row(i) %}
+          {% set href = att_url(rel_dir, i.name) %}<li>
+            {% if i.type.startswith("audio/") %}
+              <div class="att-label">{{ "Voice message" if i.flags is voice else i.label or "Audio" }}</div>
+              <audio controls preload="none" src="{{ href }}"></audio>
+            {% else %}
+              <a class="att-file" href="{{ href }}" download="{{ i.name }}">\U0001F4CE {{ i.label or i.name }}
+                {%- if i.size|size %} <span class="att-size">({{ i.size|size }})</span>{% endif %}</a>
+            {% endif %}
+            <span class="time">{{ i.ts|time }}</span>{{ goto(i.n) }}
+          </li>
+        {% endmacro %}
+        <div class="chat-head">{{ avatar(avatar_src, convo.title) }}<div>
+          <h1>{{ convo.title }}: media</h1>
+          <div class="sub"><a id="back" href="{{ chat_href }}">back to chat</a></div>
+        </div></div>
+        <nav class="tabs">
+          {% for key, title, count in sections %}<a href="#{{ key }}">{{ title }} ({{ count }})</a>{% endfor %}
+        </nav>
+        {% for key, title, count in sections %}
+          <section id="{{ key }}"><h2>{{ title }}</h2>
+            {% if key == "media" %}
+              {% for label, items in months %}
+                <h3 class="month">{{ label }}</h3>
+                <div class="grid">{% for i in items %}{{ tile(i) }}{% endfor %}</div>
+              {% endfor %}
+            {% elif key == "links" %}
+              <ul class="rows">
+                {% for l in links %}
+                  <li><a href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.title }}</a>
+                    <div class="purl">{{ l.url }}</div><span class="time">{{ l.ts|time }}</span>{{ goto(l.n) }}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <ul class="rows">{% for i in rows[key] %}{{ row(i) }}{% endfor %}</ul>
+            {% endif %}
+          </section>
+        {% endfor %}
+    """,
 }
 
 
@@ -1481,8 +1543,12 @@ def linkify(text) -> str:
     return "".join(out)
 
 
+def att_url(rel_dir: str, name: str) -> str:
+    return f"{rel_dir}/{quote(name)}"
+
+
 def att_href(rel_dir: str, name: str) -> str:
-    return esc(f"{rel_dir}/{quote(name)}")
+    return esc(att_url(rel_dir, name))
 
 
 def dims(att: dict | None) -> str:
@@ -1561,13 +1627,11 @@ def render_sticker(sticker: dict, att: dict | None, rel_dir: str) -> str:
     return f'<div class="missing">[sticker {emoji}]</div>'
 
 
-def view_once_cover(html: str, ctype: str, key: str) -> str:
+def view_once_cover(html: str, ctype: str, key: str) -> Markup:
     """Blur unopened view-once media under a cover that a click removes, without JS."""
     kind = "photo" if ctype.startswith("image/") else "video" if ctype.startswith("video/") else "media"
-    vid = f"vo{zlib.crc32(key.encode()):08x}"
-    return (f'<div class="viewonce"><input type="checkbox" class="vo-seen" id="{vid}">{html}'
-            f'<label class="vo-cover" for="{vid}">View-once {kind}<span>click to show</span>'
-            f'</label></div>')
+    return render("view_once", content=Markup(html), kind=kind,
+                  vid=f"vo{zlib.crc32(key.encode()):08x}")
 
 
 # DataMessage.ProtocolVersion in Signal's SignalService.proto
@@ -2168,74 +2232,19 @@ def media_kind(item: dict) -> str:
     return "audio" if item["type"].startswith("audio/") else "files"
 
 
-def media_goto(chat_href: str, n: int) -> str:
-    return f'<a class="goto" href="{esc(chat_href)}#m{n}" title="Show in chat">in chat</a>'
-
-
-def media_tile(item: dict, rel_dir: str, chat_href: str) -> str:
-    href = att_href(rel_dir, item["name"])
-    label = esc(item["label"] or item["type"])
-    if item["type"].startswith("image/"):
-        thumb = f'<img loading="lazy" decoding="async" src="{href}" alt="{label}">'
-    elif item["poster"]:
-        thumb = (f'<img loading="lazy" decoding="async" src="{att_href(rel_dir, item["poster"])}" '
-                 f'alt="{label}"><span class="play">&#9654;</span>')
-    else:
-        thumb = f'<span class="novideo">{label}</span><span class="play">&#9654;</span>'
-    thumb = f'<a class="thumb" href="{href}">{thumb}</a>'
-    if item.get("view_once"):
-        thumb = view_once_cover(thumb, item["type"], f'{item["n"]}/{item["name"]}')
-    tag = '<span class="tile-tag">Story</span>' if item.get("story") else ""
-    return f'<div class="tile">{thumb}{tag}{media_goto(chat_href, item["n"])}</div>'
-
-
-def media_row(item: dict, rel_dir: str, chat_href: str) -> str:
-    href = att_href(rel_dir, item["name"])
-    when = f'<span class="time">{esc(fmt_time(item["ts"]))}</span>'
-    if media_kind(item) == "audio":
-        tag = "Voice message" if item["flags"] & VOICE_MESSAGE else esc(item["label"] or "Audio")
-        body = (f'<div class="att-label">{tag}</div>'
-                f'<audio controls preload="none" src="{href}"></audio>')
-    else:
-        size = human_size(item["size"])
-        detail = f' <span class="att-size">({size})</span>' if size else ""
-        name = esc(item["label"] or item["name"])
-        body = f'<a class="att-file" href="{href}" download="{esc(item["name"])}">\U0001F4CE {name}{detail}</a>'
-    return f'<li>{body}{when}{media_goto(chat_href, item["n"])}</li>'
-
-
 def render_media_page(convo, media: list, links: list, avatar_src, rel_dir: str,
-                      chat_href: str) -> str:
+                      chat_href: str) -> Markup:
     groups = {"media": [], "audio": [], "files": []}
     for item in reversed(media):
         groups[media_kind(item)].append(item)
-    sections = []
-    tabs = []
-
-    def add(key, title, count, body):
-        if count:
-            tabs.append(f'<a href="#{key}">{title} ({count})</a>')
-            sections.append(f'<section id="{key}"><h2>{title}</h2>{body}</section>')
-
-    grid = "".join(
-        f'<h3 class="month">{esc(label)}</h3><div class="grid">'
-        + "".join(media_tile(i, rel_dir, chat_href) for i in items) + "</div>"
-        for (_, label), items in ((k, list(g)) for k, g in groupby(
-            groups["media"], key=lambda i: month_of(i["ts"]))))
-    add("media", "Photos and videos", len(groups["media"]), grid)
-    for key, title in (("audio", "Audio"), ("files", "Files")):
-        add(key, title, len(groups[key]), '<ul class="rows">' + "".join(
-            media_row(i, rel_dir, chat_href) for i in groups[key]) + "</ul>")
-    link_rows = "".join(
-        f'<li><a href="{esc(l["url"])}" target="_blank" rel="noopener noreferrer">'
-        f'{esc(l["title"])}</a><div class="purl">{esc(l["url"])}</div>'
-        f'<span class="time">{esc(fmt_time(l["ts"]))}</span>{media_goto(chat_href, l["n"])}</li>'
-        for l in reversed(links))
-    add("links", "Links", len(links), f'<ul class="rows">{link_rows}</ul>')
-    return (f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
-            f'<h1>{esc(convo["title"])}: media</h1><div class="sub">'
-            f'<a id="back" href="{esc(chat_href)}">back to chat</a></div></div></div>'
-            f'<nav class="tabs">{"".join(tabs)}</nav>{"".join(sections)}')
+    months = [(label, list(items)) for (_, label), items in groupby(
+        groups["media"], key=lambda i: month_of(i["ts"]))]
+    sections = [(key, title, count) for key, title, count in (
+        ("media", "Photos and videos", len(groups["media"])), ("audio", "Audio", len(groups["audio"])),
+        ("files", "Files", len(groups["files"])), ("links", "Links", len(links))) if count]
+    return render("media_page", convo=convo, avatar_src=avatar_src, rel_dir=rel_dir,
+                  chat_href=chat_href, sections=sections, months=months, rows=groups,
+                  links=list(reversed(links)))
 
 
 def chat_timeline(chunks, months_rel: str, build: str, out_color: str | None = None) -> Markup:
@@ -2250,8 +2259,9 @@ def render_index(summaries, sort: str) -> Markup:
                   generated=datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
-JINJA.globals.update(avatar=avatar_html)
-JINJA.filters.update(time=fmt_time)
+JINJA.globals.update(avatar=avatar_html, att_url=att_url, view_once=view_once_cover)
+JINJA.filters.update(time=fmt_time, size=human_size)
+JINJA.tests.update(voice=lambda flags: bool((flags or 0) & VOICE_MESSAGE))
 
 
 # --------------------------------------------------------------------------
@@ -2425,9 +2435,9 @@ def main() -> int:
             if result.media or result.links:
                 (out_dir / "chats" / f"{slug}_media.html").write_text(render(
                     "page", title=f"{convo['title']}: media", css=f"../assets/style.css?v={build}",
-                    content=Markup(render_media_page(convo, result.media, result.links,
-                                                     f"../{avatar_src}" if avatar_src else None,
-                                                     f"{slug}_files", f"{slug}.html")),
+                    content=render_media_page(convo, result.media, result.links,
+                                              f"../{avatar_src}" if avatar_src else None,
+                                              f"{slug}_files", f"{slug}.html"),
                     scripts=scripts))
             (out_dir / "chats" / f"{slug}.html").write_text(render(
                 "page", title=convo["title"], css=f"../assets/style.css?v={build}",
