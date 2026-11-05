@@ -23,7 +23,6 @@ import binascii
 import contextlib
 import hashlib
 import hmac
-import html
 import json
 import logging
 import mimetypes
@@ -61,7 +60,7 @@ except ImportError:  # pragma: no cover - dependency check
 
 try:
     import jinja2
-    from markupsafe import Markup
+    from markupsafe import Markup, escape
 except ImportError:  # pragma: no cover - dependency check
     sys.exit("Missing jinja2. Run with uv (uv run signal_takeout.py) or pip install jinja2")
 
@@ -964,6 +963,41 @@ TEMPLATES = {
           {% endfor %}
         </details>
     """,
+    "day": """<div class="day">{{ day }}</div>""",
+    "system": """<div class="system">{{ text }}</div>""",
+    "message": """
+        <div class="msg{% if outgoing %} out{% endif %}{% if story %} story{% endif %}" id="m{{ n }}">
+          {% if sender %}{{ avatar(sender.avatar, sender.name) }}{% endif %}
+          <div class="bubble">
+            {% if sender %}<div class="author" style="--h:{{ sender.hue }}">{{ sender.name }}</div>{% endif %}
+            {% for part in before %}{{ part }}{% endfor %}
+            {% if story %}<div class="story-tag">Story</div>{% endif %}
+            {% if note %}
+              <div class="{{ "body deleted" if deleted else "deleted" }}">{{ note }}</div>
+            {% else %}
+              {% if body %}<div class="body">{{ body|linkify }}</div>{% endif %}
+              {% for part in content %}{{ part }}{% endfor %}
+            {% endif %}
+            {% if reactions %}
+              <div class="reactions">
+                {% for emoji, count, names in reactions %}
+                  <span class="reaction"{% if names|select|list %} title="{{ names|select|join(", ") }}"{% endif %}>
+                    {{- emoji }}{% if count > 1 %}<span class="rcount">{{ count }}</span>{% endif %}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+            {% if edits %}
+              <details class="edits">
+                <summary>Edited ({{ edits|length }} earlier {{ "version" if edits|length == 1 else "versions" }})</summary>
+                {% for ts, text in edits %}
+                  <div class="edit"><span class="time">{{ ts|time }}</span> {{ text|linkify }}</div>
+                {% endfor %}
+              </details>
+            {% endif %}
+            <div class="time">{{ ts|time }}</div>
+          </div>
+        </div>
+    """,
     "media_page": """
         {% macro goto(n) %}<a class="goto" href="{{ chat_href }}#m{{ n }}" title="Show in chat">in chat</a>{% endmacro %}
         {% macro tile(i) %}
@@ -1547,8 +1581,8 @@ initCopy();
 """
 
 
-def esc(text) -> str:
-    return html.escape(str(text if text is not None else ""))
+def esc(text) -> Markup:
+    return escape("" if text is None else str(text))
 
 
 def fmt_time(ms) -> str:
@@ -1639,27 +1673,23 @@ def valid_url(url: str) -> bool:
     return ":" in host or bool(HOST_RE.fullmatch(host))
 
 
-def linkify(text) -> str:
+def linkify(text) -> Markup:
     """Escape text and turn http(s) URLs in it into links."""
-    text = str(text if text is not None else "")
-    out, pos = [], 0
+    text = "" if text is None else str(text)
+    out, pos = Markup(), 0
     for m in URL_RE.finditer(text):
         url = trim_url(m.group())
         if not valid_url(url):
             continue
-        out.append(esc(text[pos:m.start()]))
-        out.append(f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(url)}</a>')
+        out += text[pos:m.start()]
+        out += Markup('<a href="{0}" target="_blank" rel="noopener noreferrer">{0}</a>').format(url)
         pos = m.start() + len(url)
-    out.append(esc(text[pos:]))
-    return Markup("".join(out))
+    return out + text[pos:]
 
 
 def att_url(rel_dir: str, name: str) -> str:
     return f"{rel_dir}/{quote(name)}"
 
-
-def att_href(rel_dir: str, name: str) -> str:
-    return esc(att_url(rel_dir, name))
 
 
 def dims(att: dict | None) -> Markup:
@@ -2040,7 +2070,7 @@ class Chunker:
                     or n - self.meta["first"] >= CHUNK_CAP):
                 self.close(n - 1)
                 self.open(month, label, n)
-            self.parts.append(f'<div class="day">{esc(day)}</div>')
+            self.parts.append(render("day", day=day))
             self.last_day = day
         self.parts.append(html)
 
@@ -2071,15 +2101,6 @@ class Rendered:
     hits: list = field(default_factory=list)
     media: list = field(default_factory=list)
     links: list = field(default_factory=list)
-
-
-def reactor_title(reactions, emoji, name_for_cid) -> str:
-    if not name_for_cid:
-        return ""
-    names = [name_for_cid(r.get("fromId")) for r in reactions
-             if isinstance(r, dict) and r.get("emoji") == emoji]
-    names = [n for n in names if n]
-    return f' title="{esc(", ".join(names))}"' if names else ""
 
 
 def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
@@ -2141,7 +2162,7 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                 text = f'{name_for_aci(row["sourceServiceId"])} ended the poll: {ended.get("question") or ""}'
             if text:
                 rendered += 1
-                chunker.add(row["sent_at"], f'<div class="system">{esc(text)}</div>', rendered)
+                chunker.add(row["sent_at"], render("system", text=text), rendered)
                 last_ts = row["sent_at"]
                 log.debug("    #%d system: %s", rendered, text)
             continue
@@ -2154,46 +2175,41 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
         full_text = next((a["_text"] for a in by_type["long-message"] if a.get("_text")), None)
         if full_text and not data.get("deletedForEveryone"):
             body = apply_mentions(full_text, data.get("bodyRanges"), name_for_aci)
-        inner = []
-
-        sender_html = ""
+        sender = None
         if convo["type"] == "group" and not outgoing:
             who = name_for_aci(row["sourceServiceId"])
-            hue = zlib.crc32((row["sourceServiceId"] or who).encode()) % 360
-            inner.append(f'<div class="author" style="--h:{hue}">{esc(who)}</div>')
-            avatar = sender_avatar(row["sourceServiceId"]) if sender_avatar else None
-            sender_html = avatar_html(avatar, who)
+            sender = {"name": who, "hue": zlib.crc32((row["sourceServiceId"] or who).encode()) % 360,
+                      "avatar": sender_avatar(row["sourceServiceId"]) if sender_avatar else None}
 
+        before = []
         if quote:
-            inner.append(render_quote(quote, by_type["quote"],
-                                      name_for_aci(quote.get("authorAci")), att_rel_dir))
+            before.append(render_quote(quote, by_type["quote"],
+                                       name_for_aci(quote.get("authorAci")), att_rel_dir))
         if is_story:
             story_entries[row["id"]] = rendered
-            inner.append('<div class="story-tag">Story</div>')
         elif story_id and stories:
             n = story_entries.get(story_id)
-            inner.append(story_reply_quote(data, outgoing, stories.label(story_id),
-                                           f"#m{n}" if n else None, name_for_aci))
+            before.append(story_reply_quote(data, outgoing, stories.label(story_id),
+                                            f"#m{n}" if n else None, name_for_aci))
 
+        note, content = None, []
         if data.get("deletedForEveryone"):
-            inner.append('<div class="body deleted">This message was deleted.</div>')
+            note = "This message was deleted."
         elif view_once_gone:
-            inner.append(f'<div class="deleted">{view_once_note(data, outgoing)}</div>')
+            note = view_once_note(data, outgoing)
         elif unsupported:
-            inner.append(f'<div class="deleted">{esc(unsupported_note(data))}</div>')
+            note = unsupported_note(data)
         else:
-            if body:
-                inner.append(f'<div class="body">{linkify(body)}</div>')
             if poll:
-                inner.append(render_poll(poll, name_for_cid, str(rendered)))
+                content.append(render_poll(poll, name_for_cid, str(rendered)))
             if text_story:
-                inner.append(render_text_story(text_story))
+                content.append(render_text_story(text_story))
             view_once = bool(data.get("isViewOnce"))
             for i, att in enumerate(by_type["attachment"]):
                 html = render_attachment(att, att_rel_dir)
                 if view_once:
                     html = view_once_cover(html, att.get("contentType") or "", f"{rendered}/{i}")
-                inner.append(html)
+                content.append(html)
                 if att.get("_exported"):
                     media.append({"n": rendered, "ts": row["sent_at"], "name": att["_exported"],
                                   "poster": att.get("_poster"), "type": att.get("contentType") or "",
@@ -2201,19 +2217,19 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
                                   "flags": att.get("flags") or 0, "view_once": view_once,
                                   "story": is_story})
             if sticker:
-                inner.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
-                                            att_rel_dir))
+                content.append(render_sticker(sticker, next(iter(by_type["sticker"]), None),
+                                              att_rel_dir))
             for idx, preview in enumerate(previews):
                 image = next((a for a in by_type["preview"] if a["orderInMessage"] == idx), None)
-                inner.append(render_preview(preview, image, att_rel_dir))
+                content.append(render_preview(preview, image, att_rel_dir))
                 if (preview.get("url") or "").startswith(("http://", "https://")):
                     links.append({"n": rendered, "ts": row["sent_at"], "url": preview["url"],
                                   "title": preview.get("title") or preview["url"]})
-            inner.extend(render_contact(c) for c in contacts)
+            content.extend(render_contact(c) for c in contacts)
             replies = []
             if is_story and stories and convo["type"] == "group":
                 thread, replies = render_story_replies(stories.replies(row["id"]), name_for_aci)
-                inner.append(thread)
+                content.append(thread)
             searchable = " ".join(t for t in (
                 [body] + [a.get("caption") for a in by_type["attachment"]]
                 + [text_story_data(text_story).get("text") if text_story else None] + replies
@@ -2222,30 +2238,17 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
             if searchable:
                 hits.append((rendered, row["sent_at"] or 0, searchable))
 
-        reactions = data.get("reactions") or []
-        if reactions:
-            tally = Counter(r["emoji"] for r in reactions
-                            if isinstance(r, dict) and r.get("emoji"))
-            pills = "".join(
-                f'<span class="reaction"{reactor_title(reactions, emoji, name_for_cid)}>{esc(emoji)}'
-                + (f'<span class="rcount">{n}</span>' if n > 1 else "") + "</span>"
-                for emoji, n in tally.items())
-            if pills:
-                inner.append(f'<div class="reactions">{pills}</div>')
-
-        edits = [e for e in data.get("editHistory") or [] if isinstance(e, dict)][1:]
-        if edits and not data.get("deletedForEveryone"):
-            versions = "".join(
-                f'<div class="edit"><span class="time">{esc(fmt_time(e.get("timestamp")))}</span> '
-                f'{linkify(apply_mentions(e.get("body") or "", e.get("bodyRanges"), name_for_aci))}</div>'
-                for e in reversed(edits))
-            inner.append(f'<details class="edits"><summary>Edited ({len(edits)} earlier '
-                         f'{"version" if len(edits) == 1 else "versions"})</summary>{versions}</details>')
-
-        inner.append(f'<div class="time">{esc(fmt_time(row["sent_at"]))}</div>')
-        css_class = ("msg out" if outgoing else "msg") + (" story" if is_story else "")
-        chunker.add(row["sent_at"], f'<div class="{css_class}" id="m{rendered}">'
-                    f'{sender_html}<div class="bubble">{"".join(inner)}</div></div>', rendered)
+        reactions = [r for r in data.get("reactions") or [] if isinstance(r, dict) and r.get("emoji")]
+        pills = [(emoji, n, [name_for_cid(r.get("fromId")) for r in reactions if r["emoji"] == emoji]
+                  if name_for_cid else [])
+                 for emoji, n in Counter(r["emoji"] for r in reactions).items()]
+        edits = [] if data.get("deletedForEveryone") else [
+            (e.get("timestamp"), apply_mentions(e.get("body") or "", e.get("bodyRanges"), name_for_aci))
+            for e in reversed([e for e in data.get("editHistory") or [] if isinstance(e, dict)][1:])]
+        chunker.add(row["sent_at"], render(
+            "message", n=rendered, outgoing=outgoing, story=is_story, sender=sender, before=before,
+            note=note, deleted=bool(data.get("deletedForEveryone")), body=body, content=content,
+            reactions=pills, edits=edits, ts=row["sent_at"]), rendered)
 
     chunker.close(rendered)
     return Rendered(chunker.chunks, rendered, last_ts, hits, media, links)
