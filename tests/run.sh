@@ -13,7 +13,7 @@ podman run --rm -v "$PWD":/work:ro -v "$out":/out -w /tmp "$PY" sh -c '
   pip install -q uv pytest 2>&1 | tail -1
   uv run -q /work/make_fixture.py /out/fake
   uv run -q /work/signal_takeout.py --data-dir /out/fake -o /out/export
-  cd /work && uv run -q --with pytest --with sqlcipher3-binary --with cryptography --with tqdm \
+  cd /work && uv run -q --with pytest --with sqlcipher3-binary --with cryptography --with tqdm --with jinja2 \
     pytest -q -p no:cacheprovider tests'
 
 podman run --rm -v "$PWD/tests/js":/work:ro -v "$out":/out -w /tmp "$NODE" sh -c '

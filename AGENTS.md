@@ -109,6 +109,10 @@ through `pty.openpty()` from Python instead, set a window size with
   memory.
 - All page text goes into the DOM via `textContent` or `esc()`; message bodies
   are untrusted, so never build result HTML with `innerHTML`.
+- HTML is written with Jinja2 templates kept in `TEMPLATES` (one file, so
+  `uv run <url>` keeps working), autoescaped, `StrictUndefined`. The loader
+  joins each template into one line: a line break after `>` or `}` vanishes
+  with its indentation, any other becomes a space. Renderers return `Markup`.
 - Matching normalizes with NFD, strips combining marks and lowercases.
   `normMap` keeps an index map back to the original text so highlights land on
   the right characters.

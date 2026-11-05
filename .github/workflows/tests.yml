@@ -18,7 +18,7 @@ jobs:
           uv run make_fixture.py /tmp/fake
           uv run signal_takeout.py --data-dir /tmp/fake -o /tmp/export
       - name: Python tests
-        run: uv run --with pytest --with sqlcipher3-binary --with cryptography --with tqdm pytest -q tests
+        run: uv run --with pytest --with sqlcipher3-binary --with cryptography --with tqdm --with jinja2 pytest -q tests
       - name: Browser JS tests
         working-directory: tests/js
         run: |

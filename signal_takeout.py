@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # /// script
 # requires-python = ">=3.9"
-# dependencies = ["sqlcipher3-binary", "cryptography", "tqdm"]
+# dependencies = ["sqlcipher3-binary", "cryptography", "tqdm", "jinja2>=3.1"]
 # ///
 """Export a local Signal Desktop database to static HTML.
 
@@ -51,7 +51,7 @@ except ImportError:  # pragma: no cover - dependency check
         "Missing sqlcipher3. Run with uv:\n"
         "  uv run signal_takeout.py\n"
         "or install with:\n"
-        "  python3 -m venv .venv && .venv/bin/pip install sqlcipher3-binary cryptography tqdm"
+        "  python3 -m venv .venv && .venv/bin/pip install sqlcipher3-binary cryptography tqdm jinja2"
     )
 
 try:
@@ -59,6 +59,11 @@ try:
 except ImportError:  # pragma: no cover - dependency check
     sys.exit("Missing cryptography. Run with uv (uv run signal_takeout.py) or pip install cryptography")
 
+try:
+    import jinja2
+    from markupsafe import Markup
+except ImportError:  # pragma: no cover - dependency check
+    sys.exit("Missing jinja2. Run with uv (uv run signal_takeout.py) or pip install jinja2")
 
 try:
     from tqdm import tqdm
@@ -769,12 +774,97 @@ mark { background:#ffd54a; color:#000; border-radius:2px; }
 .none { color:var(--muted); font-style:italic; }
 """
 
-PAGE = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title}</title><link rel="stylesheet" href="{css}"></head>
-<body><div class="wrap">{content}</div>{scripts}</body></html>
-"""
+# Templates are joined into one line when loaded: a line break after ">" or a
+# Jinja "}" disappears with the indentation that follows, any other becomes a
+# space. So indentation never reaches the page.
+TEMPLATES = {
+    "page": """
+        <!DOCTYPE html>
+        <html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>{{ title }}</title><link rel="stylesheet" href="{{ css }}"></head>
+        <body><div class="wrap">{{ content }}</div>
+          {% for src, utf8 in scripts %}
+            <script src="{{ src }}"{% if utf8 %} charset="utf-8"{% endif %}></script>
+          {% endfor %}
+        </body></html>
+    """,
+    "avatar": """
+        {% if src %}<img class="avatar" src="{{ src }}" alt="">
+        {% else %}<span class="avatar ph" aria-hidden="true">{{ initial }}</span>{% endif %}
+    """,
+    "chat_header": """
+        <div class="stickybar">
+          <div class="chat-head">{{ avatar(avatar_src, convo.title) }}<div>
+            <h1>{{ convo.title }}</h1>
+            <div class="sub">{{ count }} entries &middot; {% if media_count %}<a
+                href="{{ slug }}_media.html">Media ({{ media_count }})</a> &middot; {% endif %}<a
+                id="back" href="../index.html">back to index</a></div>
+          </div></div>
+          <div class="findbar">
+            <input id="find" type="search" autocomplete="off" placeholder="Search this conversation">
+            <span class="find-count" id="find-count"></span>
+            <button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>
+            <button id="find-next" type="button" aria-label="Next match">&darr;</button>
+            <select id="jump" aria-label="Jump to month">
+              {% for c in chunks %}<option value="{{ c.id }}">{{ c.label }} ({{ c.count }})</option>{% endfor %}
+            </select>
+          </div>
+          <div class="dayfloat" id="dayfloat" hidden></div>
+        </div>
+    """,
+    "timeline": """
+        <div id="timeline"{% if out_color %} style="--out:{{ out_color }}"{% endif %}
+            data-find="{{ months_rel }}/find.js?v={{ build }}">
+          {% for c in chunks %}
+            <section class="chunk" data-id="{{ c.id }}" data-src="{{ months_rel }}/{{ c.id }}.js?v={{ build }}"
+                data-first="{{ c.first }}" data-last="{{ c.last }}" data-label="{{ c.label }}"
+                style="height:{{ c.count * row_px }}px">
+              <div class="chunk-label">{{ c.label }} &middot; {{ c.count }} entries</div>
+            </section>
+          {% endfor %}
+        </div>
+        <noscript><p class="missing">Messages are loaded in month chunks by JavaScript.
+          Enable it to read this conversation.</p></noscript>
+    """,
+    "index": """
+        <h1>Signal export</h1>
+        <div class="sub">{{ summaries|length }} conversations &middot; generated {{ generated }}</div>
+        <div class="tools">
+          <input id="q" type="search" autocomplete="off" placeholder="Search names and messages">
+          <label>Sort <select id="sort">
+            {% for value, label in (("recent", "Last message"), ("name", "Name")) %}
+              <option value="{{ value }}"{% if value == sort %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select></label>
+        </div>
+        <ul class="convo-list" id="list">
+          {% for s in summaries %}
+            <li data-last="{{ s.last or 0 }}" data-name="{{ s.title }}"><a href="{{ s.link }}">
+              <span class="convo-id">{{ avatar(s.avatar, s.title) }}<span
+                  class="convo-name">{{ s.title }}</span></span>
+              <span class="convo-meta">{{ s.count }} msgs &middot; {{ s.last|time }}</span>
+            </a></li>
+          {% endfor %}
+        </ul>
+        <div id="results" hidden></div>
+    """,
+}
+
+
+class _TemplateLoader(jinja2.BaseLoader):
+    def get_source(self, environment, name):
+        source = re.sub(r"(?<=[>}])\n\s*", "", TEMPLATES[name].strip())
+        return re.sub(r"\n\s*", " ", source), None, lambda: True
+
+
+JINJA = jinja2.Environment(loader=_TemplateLoader(), autoescape=True,
+                           undefined=jinja2.StrictUndefined)
+
+
+def render(name: str, **context) -> Markup:
+    return Markup(JINJA.get_template(name).render(**context))
+
 
 JS = r"""(() => {
 const $ = (id) => document.getElementById(id);
@@ -2061,31 +2151,15 @@ def render_conversation(convo, rows, attachments, name_for_aci, att_rel_dir,
     return Rendered(chunker.chunks, rendered, last_ts, hits, media, links)
 
 
-def avatar_html(src: str | None, title: str) -> str:
-    if src:
-        return f'<img class="avatar" src="{esc(src)}" alt="">'
+def avatar_html(src: str | None, title: str) -> Markup:
     initial = next((ch for ch in title if ch.isalnum()), "#").upper()
-    return f'<span class="avatar ph" aria-hidden="true">{esc(initial)}</span>'
+    return render("avatar", src=src, initial=initial)
 
 
-def chat_header(convo, count: int, avatar_src: str | None, chunks, media_link: str = "") -> str:
-    jump = "".join(f'<option value="{esc(c["id"])}">{esc(c["label"])} ({c["count"]})</option>'
-                   for c in chunks)
-    return (
-        '<div class="stickybar">'
-        f'<div class="chat-head">{avatar_html(avatar_src, convo["title"])}<div>'
-        f"<h1>{esc(convo['title'])}</h1>"
-        f'<div class="sub">{count} entries &middot; '
-        f'{media_link}<a id="back" href="../index.html">back to index</a></div></div></div>'
-        '<div class="findbar">'
-        '<input id="find" type="search" autocomplete="off" '
-        'placeholder="Search this conversation">'
-        '<span class="find-count" id="find-count"></span>'
-        '<button id="find-prev" type="button" aria-label="Previous match">&uarr;</button>'
-        '<button id="find-next" type="button" aria-label="Next match">&darr;</button>'
-        f'<select id="jump" aria-label="Jump to month">{jump}</select></div>'
-        '<div class="dayfloat" id="dayfloat" hidden></div></div>'
-    )
+def chat_header(convo, count: int, avatar_src: str | None, chunks, slug: str,
+                media_count: int = 0) -> Markup:
+    return render("chat_header", convo=convo, count=count, avatar_src=avatar_src,
+                  chunks=chunks, slug=slug, media_count=media_count)
 
 
 def media_kind(item: dict) -> str:
@@ -2164,47 +2238,20 @@ def render_media_page(convo, media: list, links: list, avatar_src, rel_dir: str,
             f'<nav class="tabs">{"".join(tabs)}</nav>{"".join(sections)}')
 
 
-def chat_timeline(chunks, months_rel: str, build: str, out_color: str | None = None) -> str:
-    sections = "".join(
-        f'<section class="chunk" data-id="{esc(c["id"])}" '
-        f'data-src="{esc(months_rel)}/{esc(c["id"])}.js?v={build}" data-first="{c["first"]}" '
-        f'data-last="{c["last"]}" data-label="{esc(c["label"])}" '
-        f'style="height:{c["count"] * ROW_ESTIMATE_PX}px">'
-        f'<div class="chunk-label">{esc(c["label"])} &middot; {c["count"]} entries</div></section>'
-        for c in chunks
-    )
-    style = f' style="--out:{esc(out_color)}"' if out_color else ""
-    return (f'<div id="timeline"{style} data-find="{esc(months_rel)}/find.js?v={build}">{sections}</div>'
-            '<noscript><p class="missing">Messages are loaded in month chunks by '
-            'JavaScript. Enable it to read this conversation.</p></noscript>')
+def chat_timeline(chunks, months_rel: str, build: str, out_color: str | None = None) -> Markup:
+    return render("timeline", chunks=chunks, months_rel=months_rel, build=build,
+                  out_color=out_color, row_px=ROW_ESTIMATE_PX)
 
 
-def render_index(summaries, sort: str) -> str:
+def render_index(summaries, sort: str) -> Markup:
     key = ((lambda s: s["title"].casefold()) if sort == "name"
            else (lambda s: -(s["last"] or 0)))
-    items = "\n".join(
-        f'<li data-last="{s["last"] or 0}" data-name="{esc(s["title"])}">'
-        f'<a href="{esc(s["link"])}"><span class="convo-id">'
-        f'{avatar_html(s["avatar"], s["title"])}'
-        f'<span class="convo-name">{esc(s["title"])}</span></span>'
-        f'<span class="convo-meta">{s["count"]} msgs &middot; {esc(fmt_time(s["last"]))}</span>'
-        f"</a></li>"
-        for s in sorted(summaries, key=key)
-    )
-    options = "".join(
-        f'<option value="{value}"{" selected" if value == sort else ""}>{label}</option>'
-        for value, label in (("recent", "Last message"), ("name", "Name"))
-    )
-    return (
-        f"<h1>Signal export</h1>"
-        f'<div class="sub">{len(summaries)} conversations &middot; '
-        f"generated {esc(datetime.now().strftime('%Y-%m-%d %H:%M'))}</div>"
-        '<div class="tools"><input id="q" type="search" autocomplete="off" '
-        'placeholder="Search names and messages">'
-        f'<label>Sort <select id="sort">{options}</select></label></div>'
-        f'<ul class="convo-list" id="list">{items}</ul>'
-        '<div id="results" hidden></div>'
-    )
+    return render("index", summaries=sorted(summaries, key=key), sort=sort,
+                  generated=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+
+JINJA.globals.update(avatar=avatar_html)
+JINJA.filters.update(time=fmt_time)
 
 
 # --------------------------------------------------------------------------
@@ -2374,25 +2421,22 @@ def main() -> int:
             link = f"chats/{slug}.html"
             avatar = export_avatar(convo, att_root, out_dir / "assets" / "avatars", slug)
             avatar_src = f"assets/avatars/{avatar}" if avatar else None
-            media_link = ""
+            scripts = [(f"../assets/takeout.js?v={build}", False)]
             if result.media or result.links:
-                (out_dir / "chats" / f"{slug}_media.html").write_text(PAGE.format(
-                    title=esc(f"{convo['title']}: media"), css=f"../assets/style.css?v={build}",
-                    content=render_media_page(convo, result.media, result.links,
-                                              f"../{avatar_src}" if avatar_src else None,
-                                              f"{slug}_files", f"{slug}.html"),
-                    scripts=f'<script src="../assets/takeout.js?v={build}"></script>'))
-                media_link = (f'<a href="{esc(slug)}_media.html">Media ('
-                              f'{len(result.media) + len(result.links)})</a> &middot; ')
-            (out_dir / "chats" / f"{slug}.html").write_text(
-                PAGE.format(title=esc(convo["title"]), css=f"../assets/style.css?v={build}",
-                            content=(chat_header(convo, result.count,
-                                                 f"../{avatar_src}" if avatar_src else None,
-                                                 result.chunks, media_link)
-                                     + chat_timeline(result.chunks, months_rel, build,
-                                                     chat_color_css(convo["color"], color_defaults))),
-                            scripts=f'<script src="../assets/takeout.js?v={build}"></script>')
-            )
+                (out_dir / "chats" / f"{slug}_media.html").write_text(render(
+                    "page", title=f"{convo['title']}: media", css=f"../assets/style.css?v={build}",
+                    content=Markup(render_media_page(convo, result.media, result.links,
+                                                     f"../{avatar_src}" if avatar_src else None,
+                                                     f"{slug}_files", f"{slug}.html")),
+                    scripts=scripts))
+            (out_dir / "chats" / f"{slug}.html").write_text(render(
+                "page", title=convo["title"], css=f"../assets/style.css?v={build}",
+                content=(chat_header(convo, result.count,
+                                     f"../{avatar_src}" if avatar_src else None,
+                                     result.chunks, slug, len(result.media) + len(result.links))
+                         + chat_timeline(result.chunks, months_rel, build,
+                                         chat_color_css(convo["color"], color_defaults))),
+                scripts=scripts))
             search_msgs.extend([len(summaries), n, ts, text] for n, ts, text in result.hits)
             summaries.append({"title": convo["title"], "link": link,
                               "count": result.count, "last": result.last_ts,
@@ -2410,12 +2454,10 @@ def main() -> int:
                                             separators=(",", ":")) + ";",
         encoding="utf-8",
     )
-    (out_dir / "index.html").write_text(
-        PAGE.format(title="Signal export", css=f"assets/style.css?v={build}",
-                    content=render_index(summaries, args.sort),
-                    scripts=f'<script src="assets/search-index.js?v={build}" charset="utf-8"></script>'
-                            f'<script src="assets/takeout.js?v={build}"></script>')
-    )
+    (out_dir / "index.html").write_text(render(
+        "page", title="Signal export", css=f"assets/style.css?v={build}",
+        content=render_index(summaries, args.sort),
+        scripts=[(f"assets/search-index.js?v={build}", True), (f"assets/takeout.js?v={build}", False)]))
 
     conn.close()
     print(f"Wrote {len(summaries)} conversations to {out_dir}/index.html")

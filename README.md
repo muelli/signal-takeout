@@ -27,7 +27,7 @@ Without uv:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install sqlcipher3-binary cryptography tqdm
+.venv/bin/pip install sqlcipher3-binary cryptography tqdm jinja2
 .venv/bin/python signal_takeout.py -o ~/signal-export
 ```
 
